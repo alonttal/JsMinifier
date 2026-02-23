@@ -526,11 +526,15 @@ public final class MinifierEngine {
     }
 
     private void emitNumber() {
+        int outStart = out.length();
         char c = stream.advance();
         out.append(c);
 
         boolean isHex = false;
+        boolean isSpecialRadix = false;
         boolean hasDot = false;
+        boolean hasExponent = false;
+        boolean isBigInt = false;
 
         // Handle 0x, 0o, 0b prefixes
         if (c == '0' && stream.hasMore()) {
@@ -538,8 +542,10 @@ public final class MinifierEngine {
             if (next == 'x' || next == 'X') {
                 out.append(stream.advance());
                 isHex = true;
+                isSpecialRadix = true;
             } else if (next == 'o' || next == 'O' || next == 'b' || next == 'B') {
                 out.append(stream.advance());
+                isSpecialRadix = true;
             }
         }
 
@@ -555,9 +561,17 @@ public final class MinifierEngine {
                 if (stream.peek(1) == '.') {
                     break;
                 }
+                // Don't consume dot when followed by an identifier (property access),
+                // e.g. 5.toFixed() → dot is property access, not decimal point.
+                // Exception: 'e'/'E' after dot is an exponent indicator, not property.
+                char afterDot = stream.peek(1);
+                if (isIdentStart(afterDot) && afterDot != 'e' && afterDot != 'E') {
+                    break;
+                }
                 hasDot = true;
                 out.append(stream.advance());
             } else if ((ch == 'e' || ch == 'E') && !isHex) {
+                hasExponent = true;
                 out.append(stream.advance());
                 // Consume optional sign after exponent
                 if (stream.hasMore() && (stream.current() == '+' || stream.current() == '-')) {
@@ -568,14 +582,83 @@ public final class MinifierEngine {
                 out.append(stream.advance());
             } else if (ch == 'n') {
                 // BigInt suffix — consume and stop
+                isBigInt = true;
                 out.append(stream.advance());
                 break;
             } else {
                 break;
             }
         }
+        if (hasDot && !isSpecialRadix && !isBigInt) {
+            shortenDecimalNumber(outStart, hasExponent);
+        }
         lastTokenKind = TokenKind.NUMBER_LITERAL;
         identBuf.setLength(0);
+    }
+
+    private void shortenDecimalNumber(int outStart, boolean hasExponent) {
+        String num = out.substring(outStart);
+
+        // Find dot position
+        int dotIdx = num.indexOf('.');
+        if (dotIdx < 0) return;
+
+        // Find exponent position
+        int expIdx = -1;
+        if (hasExponent) {
+            for (int i = dotIdx + 1; i < num.length(); i++) {
+                char ch = num.charAt(i);
+                if (ch == 'e' || ch == 'E') {
+                    expIdx = i;
+                    break;
+                }
+            }
+        }
+
+        // Fractional part bounds
+        int fracStart = dotIdx + 1;
+        int fracEnd = expIdx >= 0 ? expIdx : num.length();
+
+        // Strip trailing zeros and underscores from fractional part
+        int newFracEnd = fracEnd;
+        while (newFracEnd > fracStart) {
+            char ch = num.charAt(newFracEnd - 1);
+            if (ch == '0' || ch == '_') {
+                newFracEnd--;
+            } else {
+                break;
+            }
+        }
+
+        String intPart = num.substring(0, dotIdx);
+        String fracPart = num.substring(fracStart, newFracEnd);
+        String expPart = expIdx >= 0 ? num.substring(expIdx) : "";
+
+        StringBuilder shortened = new StringBuilder();
+
+        if (fracPart.isEmpty()) {
+            // All fractional digits were zeros/underscores
+            if (stream.hasMore() && stream.current() == '.') {
+                // Keep dot for property access safety: 1.0.toString() → 1..toString()
+                shortened.append(intPart).append('.').append(expPart);
+            } else {
+                // Remove dot entirely: 1.0 → 1
+                shortened.append(intPart).append(expPart);
+            }
+        } else {
+            // Leading zero removal: "0.5" → ".5"
+            if (intPart.equals("0")) {
+                shortened.append('.').append(fracPart).append(expPart);
+            } else {
+                shortened.append(intPart).append('.').append(fracPart).append(expPart);
+            }
+        }
+
+        // Only replace if actually shorter
+        if (shortened.length() < num.length()) {
+            out.setLength(outStart);
+            out.append(shortened);
+        }
     }
 
     // ── Character classification ────────────────────────────────────────

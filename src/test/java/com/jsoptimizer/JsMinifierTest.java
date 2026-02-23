@@ -759,13 +759,627 @@ class JsMinifierTest {
 
         @Test
         void numberThenDotPropertyAccess() {
-            // 1.0.toString() — number 1.0 then .toString()
-            assertEquals("1.0.toString()", JsMinifier.minify("1.0.toString()"));
+            // 1.0.toString() — number 1.0 then .toString(), shortened to 1..toString()
+            assertEquals("1..toString()", JsMinifier.minify("1.0.toString()"));
         }
 
         @Test
         void leadingDotNumber() {
             assertEquals("var x=.5;", JsMinifier.minify("var x = .5;"));
+        }
+    }
+
+    // ── Numeric Literal Shortening ─────────────────────────────────────
+
+    @Nested
+    class NumericLiteralShortening {
+
+        // ── Leading zero removal ────────────────────────────────────────
+
+        @Test
+        void leadingZero() {
+            assertEquals(".5", JsMinifier.minify("0.5"));
+        }
+
+        @Test
+        void leadingZeroWithTrailingZero() {
+            assertEquals(".5", JsMinifier.minify("0.50"));
+        }
+
+        // ── Trailing zero removal ───────────────────────────────────────
+
+        @Test
+        void trailingZero() {
+            assertEquals("1.5", JsMinifier.minify("1.50"));
+        }
+
+        @Test
+        void multipleTrailingZeros() {
+            assertEquals("1.5", JsMinifier.minify("1.500"));
+        }
+
+        // ── Trailing dot+zeros (remove dot entirely) ───────────────────
+
+        @Test
+        void trailingDotZero() {
+            assertEquals("1", JsMinifier.minify("1.0"));
+        }
+
+        @Test
+        void trailingDotZeros() {
+            assertEquals("100", JsMinifier.minify("100.00"));
+        }
+
+        @Test
+        void zeroPointZero() {
+            assertEquals("0", JsMinifier.minify("0.0"));
+        }
+
+        // ── Property access safety ──────────────────────────────────────
+
+        @Test
+        void propertyAccessKeepsDot() {
+            assertEquals("1..toString()", JsMinifier.minify("1.0.toString()"));
+        }
+
+        @Test
+        void zeroPropertyAccessKeepsDot() {
+            assertEquals("0..toString()", JsMinifier.minify("0.0.toString()"));
+        }
+
+        @Test
+        void leadingZeroPropertyAccess() {
+            assertEquals(".5.toFixed()", JsMinifier.minify("0.5.toFixed()"));
+        }
+
+        // ── Exponents ───────────────────────────────────────────────────
+
+        @Test
+        void exponentTrailingZero() {
+            assertEquals("1e5", JsMinifier.minify("1.0e5"));
+        }
+
+        @Test
+        void exponentLeadingZero() {
+            assertEquals(".5e2", JsMinifier.minify("0.5e2"));
+        }
+
+        @Test
+        void exponentTrailingZeros() {
+            assertEquals("1.5e3", JsMinifier.minify("1.50e3"));
+        }
+
+        @Test
+        void exponentPropertyAccess() {
+            assertEquals("1.e5.toString()", JsMinifier.minify("1.0e5.toString()"));
+        }
+
+        // ── Special formats NOT shortened ───────────────────────────────
+
+        @Test
+        void hexUnchanged() {
+            assertEquals("0xFF", JsMinifier.minify("0xFF"));
+        }
+
+        @Test
+        void octalUnchanged() {
+            assertEquals("0o77", JsMinifier.minify("0o77"));
+        }
+
+        @Test
+        void binaryUnchanged() {
+            assertEquals("0b1010", JsMinifier.minify("0b1010"));
+        }
+
+        @Test
+        void bigIntUnchanged() {
+            assertEquals("123n", JsMinifier.minify("123n"));
+        }
+
+        // ── Numeric separators ──────────────────────────────────────────
+
+        @Test
+        void separatorInIntegerPartDotZero() {
+            assertEquals("1_000", JsMinifier.minify("1_000.0"));
+        }
+
+        @Test
+        void separatorInFractionalPart() {
+            assertEquals("1.5", JsMinifier.minify("1.5_0"));
+        }
+
+        // ── Regression: already double-dot ──────────────────────────────
+
+        @Test
+        void doubleDotUnchanged() {
+            assertEquals("1..toString()", JsMinifier.minify("1..toString()"));
+        }
+
+        // ── Idempotency ────────────────────────────────────────────────
+
+        @Test
+        void leadingDotIdempotent() {
+            assertEquals(".5", JsMinifier.minify(".5"));
+        }
+
+        @Test
+        void doubleMinifyStability() {
+            String input = "var x = 1.0; var y = 0.5; var z = 1.50;";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+
+        // ── Already minimal ────────────────────────────────────────────
+
+        @Test
+        void alreadyMinimalFloat() {
+            assertEquals("1.5", JsMinifier.minify("1.5"));
+        }
+
+        @Test
+        void alreadyMinimalInteger() {
+            assertEquals("42", JsMinifier.minify("42"));
+        }
+
+        // ── Exponent with signs ─────────────────────────────────────────
+
+        @Test
+        void exponentPlusSignTrailingZero() {
+            assertEquals("1e+5", JsMinifier.minify("1.0e+5"));
+        }
+
+        @Test
+        void exponentMinusSignTrailingZero() {
+            assertEquals("1e-5", JsMinifier.minify("1.0e-5"));
+        }
+
+        @Test
+        void exponentPlusSignLeadingZero() {
+            assertEquals(".5e+2", JsMinifier.minify("0.5e+2"));
+        }
+
+        @Test
+        void exponentMinusSignLeadingZero() {
+            assertEquals(".5e-2", JsMinifier.minify("0.5e-2"));
+        }
+
+        @Test
+        void exponentPlusSignTrailingZeros() {
+            assertEquals("1.5e+3", JsMinifier.minify("1.50e+3"));
+        }
+
+        @Test
+        void exponentMinusSignTrailingZeros() {
+            assertEquals("1.5e-3", JsMinifier.minify("1.50e-3"));
+        }
+
+        // ── Uppercase exponent ──────────────────────────────────────────
+
+        @Test
+        void uppercaseExponentTrailingZero() {
+            assertEquals("1E5", JsMinifier.minify("1.0E5"));
+        }
+
+        @Test
+        void uppercaseExponentLeadingZero() {
+            assertEquals(".5E2", JsMinifier.minify("0.5E2"));
+        }
+
+        @Test
+        void uppercaseExponentPlusSign() {
+            assertEquals("1E+5", JsMinifier.minify("1.0E+5"));
+        }
+
+        // ── Zero with exponent ──────────────────────────────────────────
+
+        @Test
+        void zeroWithExponent() {
+            assertEquals("0e5", JsMinifier.minify("0.0e5"));
+        }
+
+        @Test
+        void zeroWithExponentPropertyAccess() {
+            assertEquals("0.e5.toString()", JsMinifier.minify("0.0e5.toString()"));
+        }
+
+        @Test
+        void zeroWithExponentAndSign() {
+            assertEquals("0e-3", JsMinifier.minify("0.0e-3"));
+        }
+
+        // ── Multiple zeros in fractional part ───────────────────────────
+
+        @Test
+        void doubleTrailingZeros() {
+            assertEquals("0", JsMinifier.minify("0.00"));
+        }
+
+        @Test
+        void tripleTrailingZeros() {
+            assertEquals("0", JsMinifier.minify("0.000"));
+        }
+
+        @Test
+        void trailingZeroAfterNonZeroDigit() {
+            assertEquals(".1", JsMinifier.minify("0.10"));
+        }
+
+        @Test
+        void leadingZerosInFraction() {
+            assertEquals(".01", JsMinifier.minify("0.010"));
+        }
+
+        @Test
+        void multipleTrailingZerosAfterNonZero() {
+            assertEquals(".1", JsMinifier.minify("0.100"));
+        }
+
+        @Test
+        void mixedFractionalDigitsTrailingZero() {
+            assertEquals("1.23", JsMinifier.minify("1.230"));
+        }
+
+        @Test
+        void manyTrailingZeros() {
+            assertEquals("1.5", JsMinifier.minify("1.50000"));
+        }
+
+        // ── Dot then exponent (valid input) ─────────────────────────────
+
+        @Test
+        void dotThenExponent() {
+            // 1.e5 is valid JS (= 1e5), should be shortened
+            assertEquals("1e5", JsMinifier.minify("1.e5"));
+        }
+
+        @Test
+        void dotThenExponentPropertyAccess() {
+            // 1.e5.toString() — already minimal, dot needed for property access
+            assertEquals("1.e5.toString()", JsMinifier.minify("1.e5.toString()"));
+        }
+
+        // ── Numbers in expression contexts ──────────────────────────────
+
+        @Test
+        void arrayOfShortenedNumbers() {
+            assertEquals("[.5,1,1.5]", JsMinifier.minify("[0.5, 1.0, 1.50]"));
+        }
+
+        @Test
+        void additionOfShortenedNumbers() {
+            assertEquals(".5+1", JsMinifier.minify("0.5 + 1.0"));
+        }
+
+        @Test
+        void multipleOperands() {
+            assertEquals(".5+1-0*1.5", JsMinifier.minify("0.5 + 1.0 - 0.0 * 1.50"));
+        }
+
+        @Test
+        void comparison() {
+            assertEquals("x===1", JsMinifier.minify("x === 1.0"));
+        }
+
+        @Test
+        void bothSidesComparison() {
+            assertEquals("1===1", JsMinifier.minify("1.0 === 1.0"));
+        }
+
+        @Test
+        void ternaryWithNumbers() {
+            assertEquals("a?1:.5", JsMinifier.minify("a ? 1.0 : 0.5"));
+        }
+
+        // ── Numbers in statement contexts ───────────────────────────────
+
+        @Test
+        void varDeclarationMultiple() {
+            assertEquals("var x=1,y=.5;", JsMinifier.minify("var x = 1.0, y = 0.5;"));
+        }
+
+        @Test
+        void returnShortenedInteger() {
+            assertEquals("return 1;", JsMinifier.minify("return 1.0;"));
+        }
+
+        @Test
+        void returnShortenedLeadingDot() {
+            assertEquals("return .5;", JsMinifier.minify("return 0.5;"));
+        }
+
+        @Test
+        void forLoopWithShortenedNumbers() {
+            assertEquals("for(var i=0;i<1;i+=.5){}",
+                    JsMinifier.minify("for (var i = 0.0; i < 1.0; i += 0.5) {}"));
+        }
+
+        @Test
+        void switchCaseWithShortenedNumber() {
+            assertEquals("switch(x){case 1:break}",
+                    JsMinifier.minify("switch (x) { case 1.0: break; }"));
+        }
+
+        // ── Numbers followed by different tokens ────────────────────────
+
+        @Test
+        void followedBySemicolon() {
+            assertEquals("1;", JsMinifier.minify("1.0;"));
+        }
+
+        @Test
+        void followedByCloseParen() {
+            assertEquals("(1)", JsMinifier.minify("(1.0)"));
+        }
+
+        @Test
+        void followedByCloseBracket() {
+            assertEquals("a[1]", JsMinifier.minify("a[1.0]"));
+        }
+
+        @Test
+        void followedByComma() {
+            assertEquals("f(1,2)", JsMinifier.minify("f(1.0, 2.0)"));
+        }
+
+        @Test
+        void followedByPlus() {
+            assertEquals("1+2", JsMinifier.minify("1.0 + 2"));
+        }
+
+        @Test
+        void followedByMinus() {
+            assertEquals("1-2", JsMinifier.minify("1.0 - 2"));
+        }
+
+        @Test
+        void followedByMultiply() {
+            assertEquals("1*2", JsMinifier.minify("1.0 * 2"));
+        }
+
+        @Test
+        void followedByDivide() {
+            assertEquals("1/2", JsMinifier.minify("1.0 / 2"));
+        }
+
+        @Test
+        void followedByCloseBrace() {
+            assertEquals("{x=1}", JsMinifier.minify("{ x = 1.0; }"));
+        }
+
+        @Test
+        void atEndOfInput() {
+            assertEquals("1", JsMinifier.minify("1.0"));
+        }
+
+        @Test
+        void leadingZeroAtEndOfInput() {
+            assertEquals(".5", JsMinifier.minify("0.5"));
+        }
+
+        // ── Unary operators before number ───────────────────────────────
+
+        @Test
+        void negativeLeadingZero() {
+            assertEquals("-.5", JsMinifier.minify("-0.5"));
+        }
+
+        @Test
+        void negativeTrailingZero() {
+            assertEquals("-1", JsMinifier.minify("-1.0"));
+        }
+
+        @Test
+        void unaryPlusLeadingZero() {
+            assertEquals("+.5", JsMinifier.minify("+0.5"));
+        }
+
+        @Test
+        void bitwiseNotLeadingZero() {
+            assertEquals("~.5", JsMinifier.minify("~0.5"));
+        }
+
+        @Test
+        void logicalNotLeadingZero() {
+            assertEquals("!.5", JsMinifier.minify("!0.5"));
+        }
+
+        // ── Property access chains ──────────────────────────────────────
+
+        @Test
+        void propertyAccessChain() {
+            assertEquals("1..toString().length", JsMinifier.minify("1.0.toString().length"));
+        }
+
+        @Test
+        void propertyAccessWithArgument() {
+            assertEquals("1..toFixed(2)", JsMinifier.minify("1.0.toFixed(2)"));
+        }
+
+        @Test
+        void propertyAccessWithShortenedArgument() {
+            assertEquals("1..toFixed(0)", JsMinifier.minify("1.0.toFixed(0.0)"));
+        }
+
+        @Test
+        void leadingZeroPropertyAccessChain() {
+            assertEquals(".5.toFixed(2).length", JsMinifier.minify("0.5.toFixed(2).length"));
+        }
+
+        @Test
+        void multipleZerosPropertyAccess() {
+            assertEquals("0..valueOf()", JsMinifier.minify("0.00.valueOf()"));
+        }
+
+        // ── Interaction with literal shortening ─────────────────────────
+
+        @Test
+        void truePlusShortened() {
+            assertEquals("!0+1", JsMinifier.minify("true + 1.0"));
+        }
+
+        @Test
+        void undefinedComparedToShortened() {
+            assertEquals("void 0===.5", JsMinifier.minify("undefined === 0.5"));
+        }
+
+        @Test
+        void falsePlusShortenedFloat() {
+            assertEquals("!1+.5", JsMinifier.minify("false + 0.5"));
+        }
+
+        // ── Template expression ─────────────────────────────────────────
+
+        @Test
+        void templateWithShortenedNumber() {
+            assertEquals("`${.5}`", JsMinifier.minify("`${0.5}`"));
+        }
+
+        @Test
+        void templateWithShortenedInteger() {
+            assertEquals("`${1}`", JsMinifier.minify("`${1.0}`"));
+        }
+
+        @Test
+        void templateExpressionMultipleNumbers() {
+            assertEquals("`${.5+1}`", JsMinifier.minify("`${0.5 + 1.0}`"));
+        }
+
+        // ── Numeric separators (more cases) ─────────────────────────────
+
+        @Test
+        void separatorInFractionalAllZeros() {
+            assertEquals("1", JsMinifier.minify("1.0_0"));
+        }
+
+        @Test
+        void separatorInFractionalMultipleZeros() {
+            assertEquals("1_000", JsMinifier.minify("1_000.0_0_0"));
+        }
+
+        @Test
+        void separatorBeforeTrailingZeros() {
+            assertEquals("1.2_3", JsMinifier.minify("1.2_3_0_0"));
+        }
+
+        @Test
+        void separatorWithExponent() {
+            assertEquals("1_000e5", JsMinifier.minify("1_000.0e5"));
+        }
+
+        // ── Large / unusual numbers ─────────────────────────────────────
+
+        @Test
+        void largeNumberTrailingZeros() {
+            assertEquals("123456.789", JsMinifier.minify("123456.789000"));
+        }
+
+        @Test
+        void largeIntegerDotZero() {
+            assertEquals("999999", JsMinifier.minify("999999.0"));
+        }
+
+        @Test
+        void smallFraction() {
+            assertEquals(".000001", JsMinifier.minify("0.000001"));
+        }
+
+        @Test
+        void manyDecimalPlaces() {
+            assertEquals("3.14159", JsMinifier.minify("3.141590"));
+        }
+
+        // ── Already-shortened idempotency ───────────────────────────────
+
+        @Test
+        void alreadyShortenedExponent() {
+            assertEquals("1e5", JsMinifier.minify("1e5"));
+        }
+
+        @Test
+        void plainZeroUnchanged() {
+            assertEquals("0", JsMinifier.minify("0"));
+        }
+
+        @Test
+        void leadingDotWithMultipleDigitsIdempotent() {
+            assertEquals(".123", JsMinifier.minify(".123"));
+        }
+
+        @Test
+        void alreadyMinimalMultiDigitFloat() {
+            assertEquals("1.23", JsMinifier.minify("1.23"));
+        }
+
+        @Test
+        void doubleDotPropertyIdempotent() {
+            // Already minimal: 1..toString() must not be changed
+            String input = "1..toString()";
+            assertEquals(input, JsMinifier.minify(input));
+        }
+
+        @Test
+        void doubleMinifyAllTransforms() {
+            String input = "var a=1.0, b=0.5, c=1.50, d=0.0, e=100.00, f=1.0e5, g=0.5e2;";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyPropertyAccess() {
+            String input = "1.0.toString() + 0.0.valueOf() + 0.5.toFixed()";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyExponents() {
+            String input = "var a = 1.0e5, b = 0.5e2, c = 1.50e+3, d = 0.0e-1;";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        // ── Semicolon-before-brace interaction ──────────────────────────
+
+        @Test
+        void shortenedNumberBeforeBrace() {
+            assertEquals("function f(){return 1}",
+                    JsMinifier.minify("function f() { return 1.0; }"));
+        }
+
+        @Test
+        void shortenedLeadingZeroBeforeBrace() {
+            assertEquals("function f(){return .5}",
+                    JsMinifier.minify("function f() { return 0.5; }"));
+        }
+
+        // ── ASI interaction ─────────────────────────────────────────────
+
+        @Test
+        void returnNewlineShortenedNumber() {
+            assertEquals("return\n1", JsMinifier.minify("return\n1.0"));
+        }
+
+        @Test
+        void returnNewlineLeadingDot() {
+            assertEquals("return\n.5", JsMinifier.minify("return\n0.5"));
+        }
+
+        // ── Multiple numbers in same expression ─────────────────────────
+
+        @Test
+        void objectLiteral() {
+            assertEquals("({a:1,b:.5,c:0})",
+                    JsMinifier.minify("({a: 1.0, b: 0.5, c: 0.0})"));
+        }
+
+        @Test
+        void nestedArrays() {
+            assertEquals("[[1,.5],[0,1.5]]",
+                    JsMinifier.minify("[[1.0, 0.5], [0.0, 1.50]]"));
         }
     }
 
