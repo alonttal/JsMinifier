@@ -35,6 +35,9 @@ public final class MinifierEngine {
     // Tracks whether the current multi-line comment contains a line terminator
     private boolean commentContainedNewline;
 
+    // Tracks where the current string literal begins in `out` (for quote optimization)
+    private int stringStart;
+
     private enum TokenKind {
         NONE,            // start of input
         IDENTIFIER,      // identifiers, keywords, numbers
@@ -120,6 +123,7 @@ public final class MinifierEngine {
         // Detect transitions: strings
         if (c == '\'') {
             stream.advance();
+            stringStart = out.length();
             out.append('\'');
             state = State.SINGLE_QUOTE_STRING;
             lastTokenKind = TokenKind.IDENTIFIER; // string literal acts like an expression value
@@ -127,6 +131,7 @@ public final class MinifierEngine {
         }
         if (c == '"') {
             stream.advance();
+            stringStart = out.length();
             out.append('"');
             state = State.DOUBLE_QUOTE_STRING;
             lastTokenKind = TokenKind.IDENTIFIER;
@@ -330,8 +335,58 @@ public final class MinifierEngine {
             return;
         }
         if (c == quote) {
+            optimizeStringQuotes(stringStart, quote);
             state = State.CODE;
             lastTokenKind = TokenKind.IDENTIFIER;
+        }
+    }
+
+    private void optimizeStringQuotes(int start, char quote) {
+        char otherQuote = (quote == '"') ? '\'' : '"';
+        int end = out.length();
+        int escapedSame = 0;
+        int unescapedOther = 0;
+
+        for (int i = start + 1; i < end - 1; i++) {
+            char c = out.charAt(i);
+            if (c == '\\' && i + 1 < end - 1) {
+                char next = out.charAt(i + 1);
+                if (next == quote) {
+                    escapedSame++;
+                }
+                i++; // skip escaped char
+            } else if (c == otherQuote) {
+                unescapedOther++;
+            }
+        }
+
+        if (escapedSame > unescapedOther) {
+            StringBuilder rebuilt = new StringBuilder();
+            rebuilt.append(otherQuote);
+            for (int i = start + 1; i < end - 1; i++) {
+                char c = out.charAt(i);
+                if (c == '\\' && i + 1 < end - 1) {
+                    char next = out.charAt(i + 1);
+                    if (next == quote) {
+                        // Unescape: \<quote> → <quote>
+                        rebuilt.append(quote);
+                    } else {
+                        // Preserve other escape sequences as-is
+                        rebuilt.append(c);
+                        rebuilt.append(next);
+                    }
+                    i++;
+                } else if (c == otherQuote) {
+                    // Escape: <otherQuote> → \<otherQuote>
+                    rebuilt.append('\\');
+                    rebuilt.append(otherQuote);
+                } else {
+                    rebuilt.append(c);
+                }
+            }
+            rebuilt.append(otherQuote);
+            out.setLength(start);
+            out.append(rebuilt);
         }
     }
 
@@ -498,6 +553,7 @@ public final class MinifierEngine {
             case "true" -> "!0";
             case "false" -> "!1";
             case "undefined" -> "void 0";
+            case "Infinity" -> "(1/0)";
             default -> null;
         };
         if (replacement != null && (outStart == 0 || out.charAt(outStart - 1) != '.')) {

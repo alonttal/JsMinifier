@@ -134,7 +134,7 @@ class JsMinifierTest {
 
         @Test
         void escapedQuotes() {
-            assertEquals("var x=\"he said \\\"hi\\\"\";",
+            assertEquals("var x='he said \"hi\"';",
                     JsMinifier.minify("var x = \"he said \\\"hi\\\"\";"));
         }
 
@@ -1734,6 +1734,85 @@ class JsMinifierTest {
         }
     }
 
+    // ── String Quote Optimization ──────────────────────────────────────
+
+    @Nested
+    class StringQuoteOptimization {
+        @Test
+        void noOpDouble() {
+            assertEquals("\"hello\"", JsMinifier.minify("\"hello\""));
+        }
+
+        @Test
+        void noOpSingle() {
+            assertEquals("'hello'", JsMinifier.minify("'hello'"));
+        }
+
+        @Test
+        void swapDoubleToSingle() {
+            assertEquals("'he said \"hi\"'",
+                    JsMinifier.minify("\"he said \\\"hi\\\"\""));
+        }
+
+        @Test
+        void swapSingleToDouble() {
+            assertEquals("\"it's\"", JsMinifier.minify("'it\\'s'"));
+        }
+
+        @Test
+        void tieNoSwap() {
+            // 1 escaped same, 1 unescaped other — no savings
+            assertEquals("\"a\\\"b'c\"", JsMinifier.minify("\"a\\\"b'c\""));
+        }
+
+        @Test
+        void multipleEscapes() {
+            assertEquals("'a\"b\"c'", JsMinifier.minify("\"a\\\"b\\\"c\""));
+        }
+
+        @Test
+        void noSwapWhenWorse() {
+            // No escaped quotes in original, swapping would add escapes
+            assertEquals("\"it's\"", JsMinifier.minify("\"it's\""));
+        }
+
+        @Test
+        void escapedBackslashNotConfused() {
+            // 'a\\\'b' — the \\\\ is escaped backslash, \\' is escaped quote
+            assertEquals("\"a\\\\'b\"", JsMinifier.minify("'a\\\\\\'b'"));
+        }
+
+        @Test
+        void emptyDoubleUnchanged() {
+            assertEquals("\"\"", JsMinifier.minify("\"\""));
+        }
+
+        @Test
+        void emptySingleUnchanged() {
+            assertEquals("''", JsMinifier.minify("''"));
+        }
+
+        @Test
+        void singleEscapedQuote() {
+            assertEquals("'\"'", JsMinifier.minify("\"\\\"\""));
+        }
+
+        @Test
+        void idempotency() {
+            String input = "\"he said \\\"hi\\\"\"";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+
+        @Test
+        void stringWithBothEscapes() {
+            // "she said \"it's\"" — 2 escaped same, 1 unescaped other → net +1, swap
+            assertEquals("'she said \"it\\'s\"'",
+                    JsMinifier.minify("\"she said \\\"it's\\\"\""));
+        }
+    }
+
     // ── Template Literal Edge Cases ─────────────────────────────────────
 
     @Nested
@@ -2065,6 +2144,91 @@ class JsMinifierTest {
             String first = JsMinifier.minify(input);
             String second = JsMinifier.minify(first);
             assertEquals(first, second);
+        }
+
+        // ── Infinity shortening ─────────────────────────────────────────
+
+        @Test
+        void infinityBasic() {
+            assertEquals("(1/0)", JsMinifier.minify("Infinity"));
+        }
+
+        @Test
+        void infinityAssignment() {
+            assertEquals("var x=(1/0);", JsMinifier.minify("var x = Infinity;"));
+        }
+
+        @Test
+        void infinityUnaryMinus() {
+            assertEquals("-(1/0)", JsMinifier.minify("-Infinity"));
+        }
+
+        @Test
+        void infinityPropertyAccessNotReplaced() {
+            assertEquals("obj.Infinity", JsMinifier.minify("obj.Infinity"));
+        }
+
+        @Test
+        void infinityAddition() {
+            assertEquals("a+(1/0)", JsMinifier.minify("a + Infinity"));
+        }
+
+        @Test
+        void infinityInArray() {
+            assertEquals("[(1/0)]", JsMinifier.minify("[Infinity]"));
+        }
+
+        @Test
+        void infinityFunctionArg() {
+            assertEquals("f((1/0))", JsMinifier.minify("f(Infinity)"));
+        }
+
+        @Test
+        void infinityReturn() {
+            assertEquals("return(1/0)", JsMinifier.minify("return Infinity"));
+        }
+
+        @Test
+        void infinityTypeof() {
+            assertEquals("typeof(1/0)", JsMinifier.minify("typeof Infinity"));
+        }
+
+        @Test
+        void infinityComparison() {
+            assertEquals("x===(1/0)", JsMinifier.minify("x === Infinity"));
+        }
+
+        @Test
+        void infinityWithOtherLiterals() {
+            assertEquals("[!0,(1/0)]", JsMinifier.minify("[true, Infinity]"));
+        }
+
+        @Test
+        void infinityIdempotency() {
+            assertEquals("(1/0)", JsMinifier.minify("(1/0)"));
+        }
+
+        @Test
+        void infinityDoubleMinifyStability() {
+            String input = "var x = Infinity;";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+
+        @Test
+        void infinityInStringNotReplaced() {
+            assertEquals("\"Infinity\"", JsMinifier.minify("\"Infinity\""));
+        }
+
+        @Test
+        void infinityOptionalChainingNotReplaced() {
+            assertEquals("obj?.Infinity", JsMinifier.minify("obj?.Infinity"));
+        }
+
+        @Test
+        void infinityXIdentifierNotReplaced() {
+            assertEquals("InfinityX", JsMinifier.minify("InfinityX"));
         }
     }
 
