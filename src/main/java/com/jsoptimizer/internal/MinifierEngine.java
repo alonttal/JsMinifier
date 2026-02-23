@@ -481,10 +481,40 @@ public final class MinifierEngine {
 
     private void emitIdentifier() {
         identBuf.setLength(0);
+        int outStart = out.length();
         while (stream.hasMore() && isIdentPart(stream.current())) {
             char c = stream.advance();
             out.append(c);
             identBuf.append(c);
+        }
+        // Literal shortening: true → !0, false → !1, undefined → void 0
+        String replacement = switch (identBuf.toString()) {
+            case "true" -> "!0";
+            case "false" -> "!1";
+            case "undefined" -> "void 0";
+            default -> null;
+        };
+        if (replacement != null && (outStart == 0 || out.charAt(outStart - 1) != '.')) {
+            out.setLength(outStart);
+            // Remove guard space that is no longer needed for the shorter replacement
+            if (outStart > 0 && out.charAt(outStart - 1) == ' ') {
+                char replFirst = replacement.charAt(0);
+                boolean spaceStillNeeded;
+                if (outStart < 2) {
+                    spaceStillNeeded = false;
+                } else {
+                    char beforeSpace = out.charAt(outStart - 2);
+                    spaceStillNeeded = (isIdentChar(beforeSpace) && isIdentChar(replFirst))
+                            || needsSpaceBetween(beforeSpace, replFirst);
+                }
+                if (!spaceStillNeeded) {
+                    out.setLength(outStart - 1);
+                }
+            }
+            out.append(replacement);
+            identBuf.setLength(0);
+            lastTokenKind = TokenKind.NUMBER_LITERAL;
+            return;
         }
         lastTokenKind = TokenKind.IDENTIFIER;
     }

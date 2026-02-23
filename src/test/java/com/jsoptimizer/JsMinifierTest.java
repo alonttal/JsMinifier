@@ -870,7 +870,7 @@ class JsMinifierTest {
 
         @Test
         void doWhile() {
-            assertEquals("do{}while(true);", JsMinifier.minify("do { } while (true);"));
+            assertEquals("do{}while(!0);", JsMinifier.minify("do { } while (true);"));
         }
 
         @Test
@@ -945,6 +945,209 @@ class JsMinifierTest {
         @Test
         void logicalNot() {
             assertEquals("var x=!y;", JsMinifier.minify("var x = !y;"));
+        }
+    }
+
+    // ── Literal Shortening ────────────────────────────────────────────────
+
+    @Nested
+    class LiteralShortening {
+        @Test
+        void trueBecomesNot0() {
+            assertEquals("!0", JsMinifier.minify("true"));
+        }
+
+        @Test
+        void falseBecomesNot1() {
+            assertEquals("!1", JsMinifier.minify("false"));
+        }
+
+        @Test
+        void undefinedBecomesVoid0() {
+            assertEquals("void 0", JsMinifier.minify("undefined"));
+        }
+
+        @Test
+        void inAssignment() {
+            assertEquals("var x=!0;", JsMinifier.minify("var x = true;"));
+        }
+
+        @Test
+        void afterReturn() {
+            assertEquals("return!0;", JsMinifier.minify("return true;"));
+        }
+
+        @Test
+        void returnUndefined() {
+            assertEquals("return void 0;", JsMinifier.minify("return undefined;"));
+        }
+
+        @Test
+        void inCondition() {
+            assertEquals("if(!1)", JsMinifier.minify("if (false)"));
+        }
+
+        @Test
+        void negation() {
+            assertEquals("!!0", JsMinifier.minify("!true"));
+        }
+
+        @Test
+        void comparison() {
+            assertEquals("x===void 0", JsMinifier.minify("x === undefined"));
+        }
+
+        @Test
+        void propertyAccessNotReplaced() {
+            assertEquals("obj.undefined", JsMinifier.minify("obj.undefined"));
+        }
+
+        @Test
+        void insideStringNotReplaced() {
+            assertEquals("\"true\"", JsMinifier.minify("\"true\""));
+        }
+
+        @Test
+        void idempotencyNotZero() {
+            assertEquals("!0", JsMinifier.minify("!0"));
+        }
+
+        // ── String contexts (not replaced) ──────────────────────────────
+
+        @Test
+        void insideSingleQuoteStringNotReplaced() {
+            assertEquals("'false'", JsMinifier.minify("'false'"));
+        }
+
+        @Test
+        void insideTemplateLiteralTextNotReplaced() {
+            assertEquals("`true`", JsMinifier.minify("`true`"));
+        }
+
+        @Test
+        void insideTemplateExpressionReplaced() {
+            assertEquals("`${!0}`", JsMinifier.minify("`${true}`"));
+        }
+
+        // ── Property access (not replaced) ──────────────────────────────
+
+        @Test
+        void dotAccessTrue() {
+            assertEquals("obj.true", JsMinifier.minify("obj.true"));
+        }
+
+        @Test
+        void dotAccessFalse() {
+            assertEquals("obj.false", JsMinifier.minify("obj.false"));
+        }
+
+        @Test
+        void optionalChainingNotReplaced() {
+            assertEquals("obj?.undefined", JsMinifier.minify("obj?.undefined"));
+        }
+
+        // ── Similar identifiers (not replaced) ─────────────────────────
+
+        @Test
+        void trueValueIdentNotReplaced() {
+            assertEquals("var trueValue=!0;", JsMinifier.minify("var trueValue = true;"));
+        }
+
+        @Test
+        void prefixedUnderscoredNotReplaced() {
+            assertEquals("var _undefined=1;", JsMinifier.minify("var _undefined = 1;"));
+        }
+
+        @Test
+        void suffixedNumberNotReplaced() {
+            assertEquals("var undefined2=1;", JsMinifier.minify("var undefined2 = 1;"));
+        }
+
+        // ── Multiple replacements ───────────────────────────────────────
+
+        @Test
+        void allThreeInOneStatement() {
+            assertEquals("var a=!0,b=!1,c=void 0;",
+                    JsMinifier.minify("var a = true, b = false, c = undefined;"));
+        }
+
+        @Test
+        void arrayLiteral() {
+            assertEquals("[!0,!1,void 0]",
+                    JsMinifier.minify("[true, false, undefined]"));
+        }
+
+        @Test
+        void functionArguments() {
+            assertEquals("fn(!0,!1)", JsMinifier.minify("fn(true, false)"));
+        }
+
+        @Test
+        void ternaryAllReplaced() {
+            assertEquals("!0?!1:void 0",
+                    JsMinifier.minify("true ? false : undefined"));
+        }
+
+        @Test
+        void logicalOperators() {
+            assertEquals("!0&&!1||void 0",
+                    JsMinifier.minify("true && false || undefined"));
+        }
+
+        // ── Operator combinations ───────────────────────────────────────
+
+        @Test
+        void notFalse() {
+            assertEquals("!!1", JsMinifier.minify("!false"));
+        }
+
+        @Test
+        void doubleNotTrue() {
+            assertEquals("!!!0", JsMinifier.minify("!!true"));
+        }
+
+        @Test
+        void typeofUndefined() {
+            assertEquals("typeof void 0===\"undefined\"",
+                    JsMinifier.minify("typeof undefined === \"undefined\""));
+        }
+
+        @Test
+        void voidExpressionNotConfused() {
+            // void followed by 0 is already valid — stays as-is
+            assertEquals("void 0", JsMinifier.minify("void 0"));
+        }
+
+        // ── ASI interaction ─────────────────────────────────────────────
+
+        @Test
+        void returnNewlineTrue() {
+            assertEquals("return\n!0", JsMinifier.minify("return\ntrue"));
+        }
+
+        @Test
+        void returnNewlineUndefined() {
+            assertEquals("return\nvoid 0", JsMinifier.minify("return\nundefined"));
+        }
+
+        // ── Idempotency ────────────────────────────────────────────────
+
+        @Test
+        void idempotencyNot1() {
+            assertEquals("!1", JsMinifier.minify("!1"));
+        }
+
+        @Test
+        void idempotencyVoid0() {
+            assertEquals("void 0", JsMinifier.minify("void 0"));
+        }
+
+        @Test
+        void doubleMinifyWithLiterals() {
+            String input = "var x = true; var y = false; var z = undefined;";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
         }
     }
 
