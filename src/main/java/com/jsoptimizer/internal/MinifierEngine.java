@@ -32,6 +32,9 @@ public final class MinifierEngine {
     // Whether we need to preserve a newline (for ASI protection)
     private boolean pendingNewline;
 
+    // Tracks whether the current multi-line comment contains a line terminator
+    private boolean commentContainedNewline;
+
     private enum TokenKind {
         NONE,            // start of input
         IDENTIFIER,      // identifiers, keywords, numbers
@@ -110,6 +113,7 @@ public final class MinifierEngine {
             stream.advance(); // skip /
             stream.advance(); // skip *
             state = State.MULTI_LINE_COMMENT;
+            commentContainedNewline = false;
             return;
         }
 
@@ -151,6 +155,7 @@ public final class MinifierEngine {
         if (c == '}' && !templateStack.isEmpty() && braceDepth == templateStack.peek()) {
             stream.advance();
             out.append('}');
+            braceDepth--;
             templateStack.pop();
             state = State.TEMPLATE_LITERAL;
             lastTokenKind = TokenKind.IDENTIFIER; // template acts like expression
@@ -210,13 +215,16 @@ public final class MinifierEngine {
             pendingNewline = true;
             return;
         }
-        // Also preserve newline if the next token is ++ or -- (prefix on next line)
         if (stream.hasMore()) {
             char next = stream.current();
+            // Preserve newline if the next token is ++ or -- (prefix on next line)
             if ((next == '+' && stream.peek(1) == '+') ||
                     (next == '-' && stream.peek(1) == '-')) {
                 pendingNewline = true;
+                return;
             }
+            // Guard space: prevent identifier merging or operator merging
+            emitGuardSpace(next);
         }
     }
 
@@ -264,11 +272,7 @@ public final class MinifierEngine {
         if (c == '\n') {
             stream.advance();
             state = State.CODE;
-            skipWhitespaceAndNewlines();
-            // Single-line comment ending acts like a newline for ASI
-            if (isAsiSensitive()) {
-                pendingNewline = true;
-            }
+            handleNewlineInCode();
             return;
         }
         if (c == '\r') {
@@ -277,10 +281,7 @@ public final class MinifierEngine {
                 stream.advance();
             }
             state = State.CODE;
-            skipWhitespaceAndNewlines();
-            if (isAsiSensitive()) {
-                pendingNewline = true;
-            }
+            handleNewlineInCode();
             return;
         }
         stream.advance(); // skip comment content
@@ -288,10 +289,23 @@ public final class MinifierEngine {
 
     private void processMultiLineComment() {
         char c = stream.current();
+        if (c == '\n' || c == '\r') {
+            commentContainedNewline = true;
+        }
         if (c == '*' && stream.peek(1) == '/') {
             stream.advance(); // skip *
             stream.advance(); // skip /
             state = State.CODE;
+            if (commentContainedNewline) {
+                commentContainedNewline = false;
+                // Treat as if a newline occurred (for ASI and guard spaces)
+                handleNewlineInCode();
+            } else {
+                // No newline in comment, but still need guard space check
+                if (stream.hasMore()) {
+                    emitGuardSpace(stream.current());
+                }
+            }
             return;
         }
         stream.advance(); // skip comment content
@@ -436,15 +450,31 @@ public final class MinifierEngine {
         if (pendingNewline) {
             return;
         }
-        char next = stream.current();
-        // Check if the last emitted char and the next char are both identifier chars
+        emitGuardSpace(stream.current());
+    }
+
+    private void emitGuardSpace(char next) {
         if (out.isEmpty()) {
             return;
         }
         char prev = out.charAt(out.length() - 1);
         if (isIdentChar(prev) && isIdentChar(next)) {
             out.append(' ');
+        } else if (needsSpaceBetween(prev, next)) {
+            out.append(' ');
         }
+    }
+
+    private static boolean needsSpaceBetween(char prev, char next) {
+        // Prevent ++ from + +
+        if (prev == '+' && next == '+') return true;
+        // Prevent -- from - -
+        if (prev == '-' && next == '-') return true;
+        // Prevent // (comment start) from / /
+        if (prev == '/' && next == '/') return true;
+        // Prevent /* (comment start) from / *
+        if (prev == '/' && next == '*') return true;
+        return false;
     }
 
     // ── Identifier / Number emission ────────────────────────────────────
@@ -463,29 +493,47 @@ public final class MinifierEngine {
         char c = stream.advance();
         out.append(c);
 
+        boolean isHex = false;
+        boolean hasDot = false;
+
         // Handle 0x, 0o, 0b prefixes
         if (c == '0' && stream.hasMore()) {
             char next = stream.current();
-            if (next == 'x' || next == 'X' || next == 'o' || next == 'O' ||
-                    next == 'b' || next == 'B') {
+            if (next == 'x' || next == 'X') {
+                out.append(stream.advance());
+                isHex = true;
+            } else if (next == 'o' || next == 'O' || next == 'b' || next == 'B') {
                 out.append(stream.advance());
             }
         }
 
         while (stream.hasMore()) {
             char ch = stream.current();
-            if ((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F') ||
-                    ch == '.' || ch == 'e' || ch == 'E' || ch == '+' || ch == '-' ||
-                    ch == '_' || ch == 'n') {
-                // Numeric separators (_), BigInt suffix (n), hex digits, exponents
-                // Be careful: + and - only after e/E
-                if ((ch == '+' || ch == '-') && out.length() > 0) {
-                    char prev = out.charAt(out.length() - 1);
-                    if (prev != 'e' && prev != 'E') {
-                        break;
-                    }
-                }
+            if (ch >= '0' && ch <= '9') {
                 out.append(stream.advance());
+            } else if (isHex && ((ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F'))) {
+                out.append(stream.advance());
+            } else if (ch == '.' && !hasDot && !isHex) {
+                // Only allow one dot, and not in hex numbers
+                // Check next char — if it's a dot too (like 1..toString), stop
+                if (stream.peek(1) == '.') {
+                    break;
+                }
+                hasDot = true;
+                out.append(stream.advance());
+            } else if ((ch == 'e' || ch == 'E') && !isHex) {
+                out.append(stream.advance());
+                // Consume optional sign after exponent
+                if (stream.hasMore() && (stream.current() == '+' || stream.current() == '-')) {
+                    out.append(stream.advance());
+                }
+            } else if (ch == '_') {
+                // Numeric separator
+                out.append(stream.advance());
+            } else if (ch == 'n') {
+                // BigInt suffix — consume and stop
+                out.append(stream.advance());
+                break;
             } else {
                 break;
             }

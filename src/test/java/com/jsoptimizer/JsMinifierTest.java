@@ -486,6 +486,468 @@ class JsMinifierTest {
         }
     }
 
+    // ── Operator Merging Prevention ──────────────────────────────────────
+
+    @Nested
+    class OperatorMergingPrevention {
+        @Test
+        void plusPlusMustNotMerge() {
+            // a + +b must not become a++b (changes meaning entirely)
+            assertEquals("a+ +b", JsMinifier.minify("a + +b"));
+        }
+
+        @Test
+        void minusMinusMustNotMerge() {
+            // a - -b must not become a--b
+            assertEquals("a- -b", JsMinifier.minify("a - -b"));
+        }
+
+        @Test
+        void plusBeforeIncrement() {
+            // a + ++b must not become a+++b (ambiguous)
+            assertEquals("a+ ++b", JsMinifier.minify("a + ++b"));
+        }
+
+        @Test
+        void minusBeforeDecrement() {
+            // a - --b must not become a---b (ambiguous)
+            assertEquals("a- --b", JsMinifier.minify("a - --b"));
+        }
+
+        @Test
+        void divisionThenRegex() {
+            // a / /regex/ must not become a//regex/ (creates comment)
+            assertEquals("a/ /regex/", JsMinifier.minify("a / /regex/"));
+        }
+
+        @Test
+        void divisionThenMultiply() {
+            // Prevent / * from becoming /* (comment start)
+            // a / *b is unusual but syntactically: division then deref... not valid JS
+            // but the minifier shouldn't create comment syntax
+            String result = JsMinifier.minify("a / *b");
+            assertFalse(result.contains("/*"), "Created block comment syntax: " + result);
+        }
+
+        @Test
+        void plusPlusAcrossNewline() {
+            // a +\n+b: newline between + operators
+            assertEquals("a+ +b", JsMinifier.minify("a +\n+b"));
+        }
+
+        @Test
+        void minusMinusAcrossNewline() {
+            assertEquals("a- -b", JsMinifier.minify("a -\n-b"));
+        }
+    }
+
+    // ── Comment Edge Cases ──────────────────────────────────────────────
+
+    @Nested
+    class CommentEdgeCases {
+        @Test
+        void emptyBlockComment() {
+            assertEquals("a;b;", JsMinifier.minify("a; /**/ b;"));
+        }
+
+        @Test
+        void singleLineCommentAtEofNoNewline() {
+            assertEquals("var x=1;", JsMinifier.minify("var x = 1; // comment"));
+        }
+
+        @Test
+        void blockCommentAtEof() {
+            assertEquals("var x=1;", JsMinifier.minify("var x = 1; /* comment */"));
+        }
+
+        @Test
+        void commentBetweenIdentifiers() {
+            // var/* comment */x should become var x (not varx)
+            assertEquals("var x", JsMinifier.minify("var/* comment */x"));
+        }
+
+        @Test
+        void commentBetweenSameOperators() {
+            // a +/* comment */+ b should become a+ +b (not a++b)
+            assertEquals("a+ +b", JsMinifier.minify("a +/* comment */+ b"));
+        }
+
+        @Test
+        void blockCommentWithNewlineBetweenOperators() {
+            // Comment with newline between + and + should still prevent merging
+            assertEquals("a+ +b", JsMinifier.minify("a +/* \n */+ b"));
+        }
+
+        @Test
+        void singleLineCommentBetweenSameOperators() {
+            // a +// comment\n+ b should become a+ +b (not a++b)
+            assertEquals("a+ +b", JsMinifier.minify("a +// comment\n+ b"));
+        }
+
+        @Test
+        void multiLineCommentWithNewlineTrigersAsi() {
+            // return /* \n */ value is like return\nvalue — ASI applies
+            assertEquals("return\nvalue", JsMinifier.minify("return /* \n */ value"));
+        }
+
+        @Test
+        void multiLineCommentWithoutNewlineNoAsi() {
+            // return /* comment */ value — no newline in comment, no ASI
+            assertEquals("return value", JsMinifier.minify("return /* comment */ value"));
+        }
+
+        @Test
+        void divisionSlashAfterBlockComment() {
+            // a /* comment */ / b — after comment, '/' comes, prev output is 'a'
+            // since 'a' is identifier, '/' is division
+            assertEquals("a/b", JsMinifier.minify("a /* comment */ / b"));
+        }
+    }
+
+    // ── Identifier Spacing Across Newlines ───────────────────────────────
+
+    @Nested
+    class IdentifierSpacingAcrossNewlines {
+        @Test
+        void keywordAndIdentAcrossNewline() {
+            // var\n  x = 1; — must keep space between var and x
+            assertEquals("var x=1;", JsMinifier.minify("var\n  x = 1;"));
+        }
+
+        @Test
+        void functionNameAcrossNewline() {
+            assertEquals("function foo(){}", JsMinifier.minify("function\nfoo() {}"));
+        }
+
+        @Test
+        void twoIdentifiersAcrossNewline() {
+            // instanceof\nFoo — must keep space
+            assertEquals("a instanceof Foo", JsMinifier.minify("a instanceof\nFoo"));
+        }
+
+        @Test
+        void identAfterNumberAcrossNewline() {
+            // A number followed by an identifier across a newline — need space
+            // (e.g., in property access: 1\n.toString() is different but 1\nin is "1 in")
+            assertEquals("x in y", JsMinifier.minify("x\nin\ny"));
+        }
+    }
+
+    // ── Division Assignment /= ──────────────────────────────────────────
+
+    @Nested
+    class DivisionAssignment {
+        @Test
+        void divisionAssignment() {
+            assertEquals("x/=2;", JsMinifier.minify("x /= 2;"));
+        }
+
+        @Test
+        void divisionAssignmentNoSpaces() {
+            assertEquals("x/=2;", JsMinifier.minify("x/=2;"));
+        }
+    }
+
+    // ── Regex in More Contexts ──────────────────────────────────────────
+
+    @Nested
+    class RegexInMoreContexts {
+        @Test
+        void regexAfterBang() {
+            assertEquals("!/pattern/.test(x)", JsMinifier.minify("! /pattern/.test(x)"));
+        }
+
+        @Test
+        void regexAfterTypeof() {
+            assertEquals("typeof/regex/", JsMinifier.minify("typeof /regex/"));
+        }
+
+        @Test
+        void regexAfterVoid() {
+            assertEquals("void/regex/", JsMinifier.minify("void /regex/"));
+        }
+
+        @Test
+        void regexAfterDelete() {
+            assertEquals("delete/regex/", JsMinifier.minify("delete /regex/"));
+        }
+
+        @Test
+        void regexAfterColon() {
+            assertEquals("{a:/regex/}", JsMinifier.minify("{ a: /regex/ }"));
+        }
+
+        @Test
+        void regexAfterTernaryQuestion() {
+            assertEquals("x?/a/:/b/", JsMinifier.minify("x ? /a/ : /b/"));
+        }
+
+        @Test
+        void regexAfterNew() {
+            // new /regex/ isn't idiomatic, but 'new' is in REGEX_PRECEDING_KEYWORDS
+            assertEquals("new/regex/", JsMinifier.minify("new /regex/"));
+        }
+
+        @Test
+        void divisionAfterCloseSquareBracket() {
+            assertEquals("a[0]/b", JsMinifier.minify("a[0] / b"));
+        }
+
+        @Test
+        void regexAfterCase() {
+            assertEquals("case/pattern/:break;",
+                    JsMinifier.minify("case /pattern/: break;"));
+        }
+
+        @Test
+        void regexAfterIn() {
+            // 'in' is in REGEX_PRECEDING_KEYWORDS
+            assertEquals("x in/regex/", JsMinifier.minify("x in /regex/"));
+        }
+
+        @Test
+        void regexAfterInstanceof() {
+            assertEquals("x instanceof/regex/", JsMinifier.minify("x instanceof /regex/"));
+        }
+    }
+
+    // ── Number Edge Cases ───────────────────────────────────────────────
+
+    @Nested
+    class NumberEdgeCases {
+        @Test
+        void hexNumber() {
+            assertEquals("var x=0xFF;", JsMinifier.minify("var x = 0xFF;"));
+        }
+
+        @Test
+        void octalNumber() {
+            assertEquals("var x=0o77;", JsMinifier.minify("var x = 0o77;"));
+        }
+
+        @Test
+        void binaryNumber() {
+            assertEquals("var x=0b1010;", JsMinifier.minify("var x = 0b1010;"));
+        }
+
+        @Test
+        void bigInt() {
+            assertEquals("var x=123n;", JsMinifier.minify("var x = 123n;"));
+        }
+
+        @Test
+        void floatNumber() {
+            assertEquals("var x=1.5;", JsMinifier.minify("var x = 1.5;"));
+        }
+
+        @Test
+        void scientificNotation() {
+            assertEquals("var x=1e10;", JsMinifier.minify("var x = 1e10;"));
+        }
+
+        @Test
+        void scientificNotationWithSign() {
+            assertEquals("var x=1e+10;", JsMinifier.minify("var x = 1e+10;"));
+        }
+
+        @Test
+        void doubleDotPropertyAccess() {
+            // 1..toString() — number 1. then .toString()
+            // The number parser should not consume the second dot
+            assertEquals("1..toString()", JsMinifier.minify("1..toString()"));
+        }
+
+        @Test
+        void numberThenDotPropertyAccess() {
+            // 1.0.toString() — number 1.0 then .toString()
+            assertEquals("1.0.toString()", JsMinifier.minify("1.0.toString()"));
+        }
+
+        @Test
+        void leadingDotNumber() {
+            assertEquals("var x=.5;", JsMinifier.minify("var x = .5;"));
+        }
+    }
+
+    // ── Line Ending Edge Cases ──────────────────────────────────────────
+
+    @Nested
+    class LineEndingEdgeCases {
+        @Test
+        void carriageReturnOnly() {
+            // Old Mac-style \r only line endings
+            assertEquals("var x=1;var y=2;", JsMinifier.minify("var x = 1;\rvar y = 2;"));
+        }
+
+        @Test
+        void mixedLineEndings() {
+            assertEquals("a;b;c;", JsMinifier.minify("a;\nb;\r\nc;"));
+        }
+    }
+
+    // ── String Edge Cases ───────────────────────────────────────────────
+
+    @Nested
+    class StringEdgeCases {
+        @Test
+        void emptyDoubleQuoteString() {
+            assertEquals("var x=\"\";", JsMinifier.minify("var x = \"\";"));
+        }
+
+        @Test
+        void emptySingleQuoteString() {
+            assertEquals("var x='';", JsMinifier.minify("var x = '';"));
+        }
+
+        @Test
+        void stringWithEscapedNewline() {
+            assertEquals("var x=\"line1\\nline2\";",
+                    JsMinifier.minify("var x = \"line1\\nline2\";"));
+        }
+
+        @Test
+        void adjacentStrings() {
+            assertEquals("\"a\"+\"b\"", JsMinifier.minify("\"a\" + \"b\""));
+        }
+
+        @Test
+        void stringThenRegex() {
+            // After string, / is division (string acts like IDENTIFIER)
+            assertEquals("\"a\"/b", JsMinifier.minify("\"a\" / b"));
+        }
+    }
+
+    // ── Template Literal Edge Cases ─────────────────────────────────────
+
+    @Nested
+    class TemplateLiteralEdgeCases {
+        @Test
+        void multipleExpressions() {
+            assertEquals("`${a}${b}${c}`", JsMinifier.minify("`${ a }${ b }${ c }`"));
+        }
+
+        @Test
+        void templateExpressionOnly() {
+            assertEquals("`${x}`", JsMinifier.minify("`${ x }`"));
+        }
+
+        @Test
+        void templateWithTernary() {
+            assertEquals("`${a?b:c}`", JsMinifier.minify("`${ a ? b : c }`"));
+        }
+
+        @Test
+        void tripleNestedTemplate() {
+            assertEquals("`a${`b${`c${d}`}`}`",
+                    JsMinifier.minify("`a${ `b${ `c${ d }` }` }`"));
+        }
+
+        @Test
+        void templateExpressionWithFunction() {
+            assertEquals("`${fn(a,b)}`", JsMinifier.minify("`${ fn(a, b) }`"));
+        }
+    }
+
+    // ── Miscellaneous Edge Cases ─────────────────────────────────────────
+
+    @Nested
+    class MiscEdgeCases {
+        @Test
+        void semicolonAfterReturn() {
+            // return; on same line — no ASI issues, no newline needed
+            assertEquals("return;foo;", JsMinifier.minify("return;\nfoo;"));
+        }
+
+        @Test
+        void emptyStatements() {
+            assertEquals(";;;", JsMinifier.minify("  ;  ;  ;  "));
+        }
+
+        @Test
+        void forLoop() {
+            assertEquals("for(var i=0;i<10;i++){}", JsMinifier.minify("for (var i = 0; i < 10; i++) { }"));
+        }
+
+        @Test
+        void doWhile() {
+            assertEquals("do{}while(true);", JsMinifier.minify("do { } while (true);"));
+        }
+
+        @Test
+        void ternaryOperator() {
+            assertEquals("a?b:c", JsMinifier.minify("a ? b : c"));
+        }
+
+        @Test
+        void chainedPropertyAccess() {
+            assertEquals("a.b.c.d", JsMinifier.minify("a.b.c.d"));
+        }
+
+        @Test
+        void arrayAccess() {
+            assertEquals("a[0].b[1]", JsMinifier.minify("a[0].b[1]"));
+        }
+
+        @Test
+        void labelStatement() {
+            assertEquals("label:for(;;)break label;",
+                    JsMinifier.minify("label: for (;;) break label;"));
+        }
+
+        @Test
+        void commaOperator() {
+            assertEquals("(a,b,c)", JsMinifier.minify("(a, b, c)"));
+        }
+
+        @Test
+        void nestedParens() {
+            assertEquals("((a+b)*(c-d))", JsMinifier.minify("((a + b) * (c - d))"));
+        }
+
+        @Test
+        void switchCase() {
+            assertEquals("switch(x){case 1:break;default:break;}",
+                    JsMinifier.minify("switch (x) {\n  case 1:\n    break;\n  default:\n    break;\n}"));
+        }
+
+        @Test
+        void tryCatchFinally() {
+            assertEquals("try{}catch(e){}finally{}",
+                    JsMinifier.minify("try {\n} catch (e) {\n} finally {\n}"));
+        }
+
+        @Test
+        void yieldStar() {
+            assertEquals("yield*gen();", JsMinifier.minify("yield* gen();"));
+        }
+
+        @Test
+        void asyncArrow() {
+            assertEquals("const f=async(x)=>await x;",
+                    JsMinifier.minify("const f = async (x) => await x;"));
+        }
+
+        @Test
+        void negativeNumber() {
+            assertEquals("var x=-1;", JsMinifier.minify("var x = -1;"));
+        }
+
+        @Test
+        void unaryPlus() {
+            assertEquals("var x=+y;", JsMinifier.minify("var x = +y;"));
+        }
+
+        @Test
+        void bitwiseNot() {
+            assertEquals("var x=~y;", JsMinifier.minify("var x = ~y;"));
+        }
+
+        @Test
+        void logicalNot() {
+            assertEquals("var x=!y;", JsMinifier.minify("var x = !y;"));
+        }
+    }
+
     // ── Performance ──────────────────────────────────────────────────────
 
     @Nested
