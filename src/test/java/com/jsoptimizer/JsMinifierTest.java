@@ -1811,6 +1811,170 @@ class JsMinifierTest {
             assertEquals("'she said \"it\\'s\"'",
                     JsMinifier.minify("\"she said \\\"it's\\\"\""));
         }
+
+        // ── Additional edge cases (bug hunting) ─────────────────────────
+
+        @Test
+        void singleQuoteOnlyEscapedQuote() {
+            // '\'' → "'"
+            assertEquals("\"'\"", JsMinifier.minify("'\\''"));
+        }
+
+        @Test
+        void singleCharOtherQuote() {
+            // "'" — no escapes to remove, swapping would add one → no swap
+            assertEquals("\"'\"", JsMinifier.minify("\"'\""));
+        }
+
+        @Test
+        void escapedBackslashThenQuoteChar() {
+            // "a\\\"b" — \\=escaped backslash, \"=escaped quote
+            // escapedSame=1, swap to 'a\\"b'
+            assertEquals("'a\\\\\"b'", JsMinifier.minify("\"a\\\\\\\"b\""));
+        }
+
+        @Test
+        void escapedBackslashThenQuoteCharIdempotent() {
+            // Verify 'a\\"b' → no swap (0 escapedSame, 1 unescapedOther)
+            String input = "\"a\\\\\\\"b\"";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+
+        @Test
+        void tripleEscapedQuotes() {
+            // "\"\"\""  — 3 escaped same, 0 unescaped other → swap to '"""'
+            assertEquals("'\"\"\"'", JsMinifier.minify("\"\\\"\\\"\\\"\""));
+        }
+
+        @Test
+        void preserveNewlineEscape() {
+            // "\n\"" — \n preserved, \" unescaped
+            assertEquals("'\\n\"'", JsMinifier.minify("\"\\n\\\"\""));
+        }
+
+        @Test
+        void preserveTabEscape() {
+            // "\t\"" — \t preserved, \" unescaped
+            assertEquals("'\\t\"'", JsMinifier.minify("\"\\t\\\"\""));
+        }
+
+        @Test
+        void preserveUnicodeEscape() {
+            // "\u0041\"" — \u0041 preserved, \" unescaped
+            assertEquals("'\\u0041\"'", JsMinifier.minify("\"\\u0041\\\"\""));
+        }
+
+        @Test
+        void preserveHexEscape() {
+            // "\x41\"" — \x41 preserved, \" unescaped
+            assertEquals("'\\x41\"'", JsMinifier.minify("\"\\x41\\\"\""));
+        }
+
+        @Test
+        void preserveNullEscape() {
+            // "\0\"" — \0 preserved, \" unescaped
+            assertEquals("'\\0\"'", JsMinifier.minify("\"\\0\\\"\""));
+        }
+
+        @Test
+        void onlyEscapedBackslash() {
+            // "\\\\" — just escaped backslash, no quote escapes → no swap
+            assertEquals("\"\\\\\"", JsMinifier.minify("\"\\\\\""));
+        }
+
+        @Test
+        void escapedBackslashAtEnd() {
+            // "a\\\\" — content is a\ , no quote escapes → no swap
+            assertEquals("\"a\\\\\"", JsMinifier.minify("\"a\\\\\""));
+        }
+
+        @Test
+        void twoStringsBackToBack() {
+            // First string swaps (2 escaped quotes), second stays (0 escapes, has unescaped ')
+            assertEquals("'he said \"hi\"'+\"it's\"",
+                    JsMinifier.minify("\"he said \\\"hi\\\"\"+\"it's\""));
+        }
+
+        @Test
+        void twoStringsWithDifferentSwapDirections() {
+            // First swaps "→', second swaps '→"
+            assertEquals("'a\"b'+\"c'd\"",
+                    JsMinifier.minify("\"a\\\"b\"+'c\\'d'"));
+        }
+
+        @Test
+        void stringInTemplateExpression() {
+            // String inside template expression gets optimized
+            assertEquals("`${'a\"b'}`",
+                    JsMinifier.minify("`${\"a\\\"b\"}`"));
+        }
+
+        @Test
+        void closingQuoteAtEndOfInput() {
+            // String is the very last thing in input
+            assertEquals("'a\"b'", JsMinifier.minify("\"a\\\"b\""));
+        }
+
+        @Test
+        void manyEscapedQuotesSingleQuoted() {
+            // '\'\'\'\'' — 4 escaped quotes → "''''"
+            assertEquals("\"''''\"", JsMinifier.minify("'\\'\\'\\'\\''"));
+        }
+
+        @Test
+        void escapedBackslashBeforeClosingQuote() {
+            // 'a\\' — escaped backslash right before closing quote
+            // No escaped quotes → no swap
+            assertEquals("'a\\\\'", JsMinifier.minify("'a\\\\'"));
+        }
+
+        @Test
+        void mixedEscapesThenQuoteEscape() {
+            // "\n\t\"" — \n, \t preserved, \" unescaped when swapping
+            assertEquals("'\\n\\t\"'", JsMinifier.minify("\"\\n\\t\\\"\""));
+        }
+
+        @Test
+        void quoteOptimizationDoesNotAffectRegex() {
+            // Regex with quotes should not be touched
+            assertEquals("var x=/[\"']/;", JsMinifier.minify("var x = /[\"']/;"));
+        }
+
+        @Test
+        void quoteOptimizationDoesNotAffectTemplateLiteral() {
+            // Template literal with quotes should not be touched
+            assertEquals("var x=`he said \"hi\"`;",
+                    JsMinifier.minify("var x = `he said \"hi\"`;"));
+        }
+
+        @Test
+        void doubleMinifyAllStringTypes() {
+            String input = "var a = \"he said \\\"hi\\\"\", b = 'it\\'s', c = \"plain\";";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void stringFollowedByDivision() {
+            // After string quote swap, division should still be recognized
+            assertEquals("'a\"b'/c", JsMinifier.minify("\"a\\\"b\" / c"));
+        }
+
+        @Test
+        void stringInCondition() {
+            assertEquals("if('he said \"hi\"')x();",
+                    JsMinifier.minify("if (\"he said \\\"hi\\\"\") x();"));
+        }
+
+        @Test
+        void escapedBackslashThenUnescapedOtherQuote() {
+            // "a\\'b" — \\ is escaped backslash, then ' is unescaped other
+            // escapedSame=0, unescapedOther=1 → no swap (would make it worse)
+            assertEquals("\"a\\\\'b\"", JsMinifier.minify("\"a\\\\'b\""));
+        }
     }
 
     // ── Template Literal Edge Cases ─────────────────────────────────────
@@ -2229,6 +2393,156 @@ class JsMinifierTest {
         @Test
         void infinityXIdentifierNotReplaced() {
             assertEquals("InfinityX", JsMinifier.minify("InfinityX"));
+        }
+
+        @Test
+        void infinityMultiplication() {
+            // Parens ensure a*(1/0) is not misinterpreted as (a*1)/0
+            assertEquals("a*(1/0)", JsMinifier.minify("a * Infinity"));
+        }
+
+        @Test
+        void infinityExponentiation() {
+            // Parens ensure a**(1/0) is not misinterpreted as (a**1)/0
+            assertEquals("a**(1/0)", JsMinifier.minify("a ** Infinity"));
+        }
+
+        @Test
+        void infinityDivision() {
+            assertEquals("a/(1/0)", JsMinifier.minify("a / Infinity"));
+        }
+
+        @Test
+        void infinityPlusInfinity() {
+            assertEquals("(1/0)+(1/0)", JsMinifier.minify("Infinity + Infinity"));
+        }
+
+        @Test
+        void infinityTernary() {
+            assertEquals("x?(1/0):0", JsMinifier.minify("x ? Infinity : 0"));
+        }
+
+        @Test
+        void infinityLogicalNot() {
+            assertEquals("!(1/0)", JsMinifier.minify("!Infinity"));
+        }
+
+        @Test
+        void infinityUnaryPlus() {
+            assertEquals("+(1/0)", JsMinifier.minify("+Infinity"));
+        }
+
+        @Test
+        void infinityBitwiseNot() {
+            assertEquals("~(1/0)", JsMinifier.minify("~Infinity"));
+        }
+
+        @Test
+        void infinityInForOf() {
+            assertEquals("for(const x of(1/0));",
+                    JsMinifier.minify("for (const x of Infinity);"));
+        }
+
+        @Test
+        void infinityAfterComma() {
+            assertEquals("(a,(1/0))", JsMinifier.minify("(a, Infinity)"));
+        }
+
+        @Test
+        void infinityInBracketAccess() {
+            assertEquals("a[(1/0)]", JsMinifier.minify("a[Infinity]"));
+        }
+
+        @Test
+        void infinityInSingleQuoteString() {
+            assertEquals("'Infinity'", JsMinifier.minify("'Infinity'"));
+        }
+
+        @Test
+        void infinityInTemplateLiteral() {
+            assertEquals("`Infinity`", JsMinifier.minify("`Infinity`"));
+        }
+
+        @Test
+        void infinityInTemplateExpression() {
+            assertEquals("`${(1/0)}`", JsMinifier.minify("`${Infinity}`"));
+        }
+
+        @Test
+        void infinityVoid() {
+            assertEquals("void(1/0)", JsMinifier.minify("void Infinity"));
+        }
+
+        @Test
+        void infinityDelete() {
+            assertEquals("delete(1/0)", JsMinifier.minify("delete Infinity"));
+        }
+
+        @Test
+        void infinityNew() {
+            assertEquals("new(1/0)", JsMinifier.minify("new Infinity"));
+        }
+
+        @Test
+        void infinityThrow() {
+            assertEquals("throw(1/0);", JsMinifier.minify("throw Infinity;"));
+        }
+
+        @Test
+        void infinityDoubleMinifyAllContexts() {
+            String input = "var a = Infinity; return Infinity; typeof Infinity; [Infinity]; -Infinity;";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void infinityWithAllLiterals() {
+            assertEquals("[!0,!1,void 0,(1/0)]",
+                    JsMinifier.minify("[true, false, undefined, Infinity]"));
+        }
+
+        @Test
+        void infinityPropertyAccessChain() {
+            // obj.Infinity.toString — Infinity as property, not replaced
+            assertEquals("obj.Infinity.toString", JsMinifier.minify("obj.Infinity.toString"));
+        }
+
+        @Test
+        void _infinityPrefixNotReplaced() {
+            assertEquals("_Infinity", JsMinifier.minify("_Infinity"));
+        }
+
+        @Test
+        void $infinityPrefixNotReplaced() {
+            assertEquals("$Infinity", JsMinifier.minify("$Infinity"));
+        }
+
+        @Test
+        void infinityInRegex() {
+            assertEquals("var x=/Infinity/;", JsMinifier.minify("var x = /Infinity/;"));
+        }
+
+        @Test
+        void infinityAfterNewline() {
+            // return\nInfinity — ASI applies
+            assertEquals("return\n(1/0)", JsMinifier.minify("return\nInfinity"));
+        }
+
+        @Test
+        void infinityInComparison() {
+            assertEquals("x<(1/0)", JsMinifier.minify("x < Infinity"));
+        }
+
+        @Test
+        void infinitySemicolonBeforeBrace() {
+            assertEquals("function f(){return(1/0)}",
+                    JsMinifier.minify("function f() { return Infinity; }"));
+        }
+
+        @Test
+        void infinityAssignmentOp() {
+            assertEquals("x+=(1/0)", JsMinifier.minify("x += Infinity"));
         }
     }
 
