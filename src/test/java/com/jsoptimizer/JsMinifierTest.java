@@ -1532,6 +1532,158 @@ class JsMinifierTest {
         void scientificWithBooleanCoercion() {
             assertEquals("!0+1e3", JsMinifier.minify("true + 1000"));
         }
+
+        // ── Double-dot property access on plain integers ─────────────────
+
+        @Test
+        void doubleDotScientificPropertyAccess() {
+            // 1000..toString() — emitNumber sees ".." and stops before consuming
+            // the dot, yielding token "1000". shortenToScientific converts to 1e3.
+            // The first dot was a trailing decimal dot; after scientific notation
+            // it's redundant, so output should be 1e3.toString() (single dot).
+            assertEquals("1e3.toString()", JsMinifier.minify("1000..toString()"));
+        }
+
+        @Test
+        void doubleDotScientificPropertyAccessChain() {
+            assertEquals("1e3.toString().length", JsMinifier.minify("1000..toString().length"));
+        }
+
+        @Test
+        void doubleDotNoConversion() {
+            // 100..toString() — 1e2 is same length (3 chars), no conversion
+            // keeps double-dot as-is
+            assertEquals("100..toString()", JsMinifier.minify("100..toString()"));
+        }
+
+        // ── Breakeven boundaries ─────────────────────────────────────────
+
+        @Test
+        void scientificBreakeven500() {
+            // 500 → "5e2" is same 3 chars, not shorter
+            assertEquals("500", JsMinifier.minify("500"));
+        }
+
+        @Test
+        void scientificBreakeven5000() {
+            // 5000 → "5e3" saves 1 char
+            assertEquals("5e3", JsMinifier.minify("5000"));
+        }
+
+        @Test
+        void scientificBreakeven12300() {
+            // 12300 → "123e2" is same 5 chars, not shorter
+            assertEquals("12300", JsMinifier.minify("12300"));
+        }
+
+        @Test
+        void scientificBreakeven1230000() {
+            // 1230000 (7 chars) → "123e4" (5 chars), saves 2
+            assertEquals("123e4", JsMinifier.minify("1230000"));
+        }
+
+        // ── Very large numbers ───────────────────────────────────────────
+
+        @Test
+        void scientificDoubleDigitExponent() {
+            assertEquals("1e10", JsMinifier.minify("10000000000"));
+        }
+
+        @Test
+        void scientificLargePrefix() {
+            assertEquals("9e12", JsMinifier.minify("9000000000000"));
+        }
+
+        // ── Property access on non-convertible ──────────────────────────
+
+        @Test
+        void propertyAccessNonConvertible() {
+            // 10 → 1e1 would be longer (3 > 2), keeps 10.
+            assertEquals("10..toString()", JsMinifier.minify("10.0.toString()"));
+        }
+
+        // ── Zero edge cases ─────────────────────────────────────────────
+
+        @Test
+        void zeroDoubleDotPropertyAccess() {
+            // 0.0.toString() → 0..toString() (all zeros, can't convert to scientific)
+            assertEquals("0..toString()", JsMinifier.minify("0.0.toString()"));
+        }
+
+        // ── Fractional parts prevent conversion ─────────────────────────
+
+        @Test
+        void fractionalPartSkipped() {
+            // Has real fractional part → can't convert
+            assertEquals("2000.5", JsMinifier.minify("2000.5"));
+        }
+
+        @Test
+        void fractionalZerosStrippedThenConverted() {
+            // 20000.0 → strip zeros → 20000 → 2e4
+            assertEquals("2e4", JsMinifier.minify("20000.0"));
+        }
+
+        // ── Expression contexts ──────────────────────────────────────────
+
+        @Test
+        void scientificInTernary() {
+            assertEquals("x?1e3:2e3", JsMinifier.minify("x ? 1000 : 2000"));
+        }
+
+        @Test
+        void scientificInFunctionCall() {
+            assertEquals("f(1e3,2e3,3e3)", JsMinifier.minify("f(1000, 2000, 3000)"));
+        }
+
+        @Test
+        void scientificInBracketAccess() {
+            assertEquals("a[1e3]", JsMinifier.minify("a[1000]"));
+        }
+
+        @Test
+        void scientificInStringConcat() {
+            assertEquals("\"\"+1e3", JsMinifier.minify("\"\" + 1000"));
+        }
+
+        @Test
+        void scientificInReturn() {
+            assertEquals("return 1e3", JsMinifier.minify("return 1000"));
+        }
+
+        @Test
+        void scientificInCase() {
+            assertEquals("case 1e3:", JsMinifier.minify("case 1000:"));
+        }
+
+        // ── Separator edge cases ─────────────────────────────────────────
+
+        @Test
+        void separatorUnusualPlacement() {
+            // 1_0_0_0 → separators stripped → 1000 → 1e3
+            assertEquals("1e3", JsMinifier.minify("1_0_0_0"));
+        }
+
+        @Test
+        void separatorInMiddleOfZeros() {
+            assertEquals("1e3", JsMinifier.minify("10_00"));
+        }
+
+        // ── Number followed by identifier starting with 'e' ─────────────
+
+        @Test
+        void scientificBeforeSemicolonAndEval() {
+            // Semicolon separates number from eval, no ambiguity
+            assertEquals("1e3;eval()", JsMinifier.minify("1000; eval()"));
+        }
+
+        // ── Multiple scientific in one statement ─────────────────────────
+
+        @Test
+        void multipleScientificInVarDecl() {
+            assertEquals("var a=1e3,b=2e6,c=300",
+                    JsMinifier.minify("var a = 1000, b = 2000000, c = 300"));
+        }
     }
 
     // ── Line Ending Edge Cases ──────────────────────────────────────────

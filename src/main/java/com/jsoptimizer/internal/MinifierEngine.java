@@ -594,6 +594,15 @@ public final class MinifierEngine {
         }
         if (!isSpecialRadix && !isBigInt && !hasExponent) {
             shortenToScientific(outStart);
+            // If scientific conversion succeeded and the stream is at "..",
+            // the first dot is a trailing decimal dot (e.g. 1000..toString()).
+            // Scientific notation makes it redundant — 1e3.toString() is
+            // unambiguous — so skip the first dot.
+            if (out.indexOf("e", outStart) >= 0
+                    && stream.hasMore() && stream.current() == '.'
+                    && stream.peek(1) == '.') {
+                stream.advance(); // skip redundant trailing decimal dot
+            }
         }
         lastTokenKind = TokenKind.NUMBER_LITERAL;
         identBuf.setLength(0);
