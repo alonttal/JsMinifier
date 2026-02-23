@@ -373,13 +373,13 @@ class JsMinifierTest {
 
         @Test
         void asyncAwait() {
-            assertEquals("async function f(){await fetch(url);}",
+            assertEquals("async function f(){await fetch(url)}",
                     JsMinifier.minify("async function f() { await fetch(url); }"));
         }
 
         @Test
         void classDeclaration() {
-            assertEquals("class Foo extends Bar{constructor(){super();}}",
+            assertEquals("class Foo extends Bar{constructor(){super()}}",
                     JsMinifier.minify("class Foo extends Bar {\n  constructor() {\n    super();\n  }\n}"));
         }
 
@@ -397,7 +397,7 @@ class JsMinifierTest {
 
         @Test
         void generatorFunction() {
-            assertEquals("function*gen(){yield 1;yield 2;}",
+            assertEquals("function*gen(){yield 1;yield 2}",
                     JsMinifier.minify("function* gen() {\n  yield 1;\n  yield 2;\n}"));
         }
 
@@ -409,7 +409,7 @@ class JsMinifierTest {
 
         @Test
         void privateFields() {
-            assertEquals("class A{#x=1;get x(){return this.#x;}}",
+            assertEquals("class A{#x=1;get x(){return this.#x}}",
                     JsMinifier.minify("class A {\n  #x = 1;\n  get x() { return this.#x; }\n}"));
         }
 
@@ -432,19 +432,19 @@ class JsMinifierTest {
     class FunctionMinification {
         @Test
         void simpleFunction() {
-            assertEquals("function foo(a,b){return a+b;}",
+            assertEquals("function foo(a,b){return a+b}",
                     JsMinifier.minify("function foo(a, b) {\n  return a + b;\n}"));
         }
 
         @Test
         void iife() {
-            assertEquals("(function(){var x=1;})();",
+            assertEquals("(function(){var x=1})();",
                     JsMinifier.minify("(function() {\n  var x = 1;\n})();"));
         }
 
         @Test
         void nestedFunctions() {
-            assertEquals("function outer(){function inner(){return 1;}return inner();}",
+            assertEquals("function outer(){function inner(){return 1}return inner()}",
                     JsMinifier.minify(
                             "function outer() {\n  function inner() {\n    return 1;\n  }\n  return inner();\n}"));
         }
@@ -456,7 +456,7 @@ class JsMinifierTest {
     class Idempotency {
         @Test
         void alreadyMinified() {
-            String minified = "var x=1;var y=2;function f(a,b){return a+b;}";
+            String minified = "var x=1;var y=2;function f(a,b){return a+b}";
             assertEquals(minified, JsMinifier.minify(minified));
         }
 
@@ -906,7 +906,7 @@ class JsMinifierTest {
 
         @Test
         void switchCase() {
-            assertEquals("switch(x){case 1:break;default:break;}",
+            assertEquals("switch(x){case 1:break;default:break}",
                     JsMinifier.minify("switch (x) {\n  case 1:\n    break;\n  default:\n    break;\n}"));
         }
 
@@ -1145,6 +1145,85 @@ class JsMinifierTest {
         @Test
         void doubleMinifyWithLiterals() {
             String input = "var x = true; var y = false; var z = undefined;";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+    }
+
+    // ── Semicolon Before Brace ─────────────────────────────────────────
+
+    @Nested
+    class SemicolonBeforeBrace {
+        @Test
+        void basic() {
+            assertEquals("{a()}", JsMinifier.minify("{ a(); }"));
+        }
+
+        @Test
+        void functionBody() {
+            assertEquals("function f(){return 1}", JsMinifier.minify("function f() { return 1; }"));
+        }
+
+        @Test
+        void nestedBlocks() {
+            assertEquals("{if(x){a()}}", JsMinifier.minify("{ if (x) { a(); } }"));
+        }
+
+        @Test
+        void multipleSemicolons() {
+            assertEquals("{}", JsMinifier.minify("{;;;}"));
+        }
+
+        @Test
+        void emptyBlockUnchanged() {
+            assertEquals("{}", JsMinifier.minify("{}"));
+        }
+
+        @Test
+        void forLoopSemicolonsPreserved() {
+            assertEquals("for(;;){}", JsMinifier.minify("for(;;){}"));
+        }
+
+        @Test
+        void doWhile() {
+            assertEquals("do{a()}while(x);", JsMinifier.minify("do { a(); } while(x);"));
+        }
+
+        @Test
+        void arrowFunction() {
+            assertEquals("const f=()=>{return 1};", JsMinifier.minify("const f = () => { return 1; };"));
+        }
+
+        @Test
+        void classBody() {
+            assertEquals("class A{x=1}", JsMinifier.minify("class A { x = 1; }"));
+        }
+
+        @Test
+        void switchStatement() {
+            assertEquals("switch(x){case 1:break}", JsMinifier.minify("switch(x) { case 1: break; }"));
+        }
+
+        @Test
+        void semicolonNotBeforeBracePreserved() {
+            assertEquals("a;b", JsMinifier.minify("a; b"));
+        }
+
+        @Test
+        void semicolonAtEofPreserved() {
+            assertEquals("a;", JsMinifier.minify("a;"));
+        }
+
+        @Test
+        void idempotency() {
+            String input = "function f(){return 1}";
+            assertEquals(input, JsMinifier.minify(input));
+        }
+
+        @Test
+        void doubleMinify() {
+            String input = "function f() { return 1; }";
             String first = JsMinifier.minify(input);
             String second = JsMinifier.minify(first);
             assertEquals(first, second);

@@ -198,6 +198,12 @@ public final class MinifierEngine {
         }
 
         // Punctuators / operators
+        // Drop redundant semicolons before }
+        if (c == '}') {
+            while (!out.isEmpty() && out.charAt(out.length() - 1) == ';') {
+                out.setLength(out.length() - 1);
+            }
+        }
         stream.advance();
         out.append(c);
         lastTokenKind = switch (c) {
