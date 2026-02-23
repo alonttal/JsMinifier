@@ -592,6 +592,9 @@ public final class MinifierEngine {
         if (hasDot && !isSpecialRadix && !isBigInt) {
             shortenDecimalNumber(outStart, hasExponent);
         }
+        if (!isSpecialRadix && !isBigInt && !hasExponent) {
+            shortenToScientific(outStart);
+        }
         lastTokenKind = TokenKind.NUMBER_LITERAL;
         identBuf.setLength(0);
     }
@@ -658,6 +661,51 @@ public final class MinifierEngine {
         if (shortened.length() < num.length()) {
             out.setLength(outStart);
             out.append(shortened);
+        }
+    }
+
+    private void shortenToScientific(int outStart) {
+        String num = out.substring(outStart);
+
+        // If it contains a dot NOT at the final position, it has a fractional part — skip
+        int dotIdx = num.indexOf('.');
+        boolean hasTrailingDot = false;
+        if (dotIdx >= 0) {
+            if (dotIdx != num.length() - 1) {
+                return; // real fractional part, not eligible
+            }
+            // Trailing dot (from shortenDecimalNumber property-access retention)
+            hasTrailingDot = true;
+            num = num.substring(0, dotIdx); // strip trailing dot for analysis
+        }
+
+        // Remove all numeric separators to get clean digit string
+        String clean = num.replace("_", "");
+
+        if (clean.isEmpty()) return;
+
+        // Count trailing zeros
+        int trailingZeros = 0;
+        for (int i = clean.length() - 1; i >= 0; i--) {
+            if (clean.charAt(i) == '0') {
+                trailingZeros++;
+            } else {
+                break;
+            }
+        }
+
+        // Guard: no trailing zeros, or ALL digits are zeros (e.g. "0")
+        if (trailingZeros == 0 || trailingZeros >= clean.length()) return;
+
+        // Build scientific form: <prefix>e<trailingZeroCount>
+        String prefix = clean.substring(0, clean.length() - trailingZeros);
+        String scientific = prefix + "e" + trailingZeros;
+
+        // Only replace if strictly shorter than the original output
+        String original = out.substring(outStart);
+        if (scientific.length() < original.length()) {
+            out.setLength(outStart);
+            out.append(scientific);
         }
     }
 

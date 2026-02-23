@@ -421,7 +421,7 @@ class JsMinifierTest {
 
         @Test
         void numericSeparators() {
-            assertEquals("var x=1_000_000;",
+            assertEquals("var x=1e6;",
                     JsMinifier.minify("var x = 1_000_000;"));
         }
     }
@@ -880,7 +880,7 @@ class JsMinifierTest {
 
         @Test
         void separatorInIntegerPartDotZero() {
-            assertEquals("1_000", JsMinifier.minify("1_000.0"));
+            assertEquals("1e3", JsMinifier.minify("1_000.0"));
         }
 
         @Test
@@ -1254,7 +1254,7 @@ class JsMinifierTest {
 
         @Test
         void separatorInFractionalMultipleZeros() {
-            assertEquals("1_000", JsMinifier.minify("1_000.0_0_0"));
+            assertEquals("1e3", JsMinifier.minify("1_000.0_0_0"));
         }
 
         @Test
@@ -1380,6 +1380,157 @@ class JsMinifierTest {
         void nestedArrays() {
             assertEquals("[[1,.5],[0,1.5]]",
                     JsMinifier.minify("[[1.0, 0.5], [0.0, 1.50]]"));
+        }
+
+        // ── Scientific notation for large integers ────────────────────────
+
+        @Test
+        void scientificBasic1000() {
+            assertEquals("1e3", JsMinifier.minify("1000"));
+        }
+
+        @Test
+        void scientificBasic10000() {
+            assertEquals("1e4", JsMinifier.minify("10000"));
+        }
+
+        @Test
+        void scientificBasic1000000() {
+            assertEquals("1e6", JsMinifier.minify("1000000"));
+        }
+
+        @Test
+        void scientificMultiDigitPrefix2000() {
+            assertEquals("2e3", JsMinifier.minify("2000"));
+        }
+
+        @Test
+        void scientificMultiDigitPrefix15000() {
+            assertEquals("15e3", JsMinifier.minify("15000"));
+        }
+
+        @Test
+        void scientificMultiDigitPrefix123000() {
+            assertEquals("123e3", JsMinifier.minify("123000"));
+        }
+
+        @Test
+        void scientificNotShortened100() {
+            // 100 → "1e2" is same length (3 chars), not shorter
+            assertEquals("100", JsMinifier.minify("100"));
+        }
+
+        @Test
+        void scientificNotShortened200() {
+            assertEquals("200", JsMinifier.minify("200"));
+        }
+
+        @Test
+        void scientificNotShortened10() {
+            // 10 → "1e1" is same length (2 vs 3), would be longer
+            assertEquals("10", JsMinifier.minify("10"));
+        }
+
+        @Test
+        void scientificNotShortened42() {
+            assertEquals("42", JsMinifier.minify("42"));
+        }
+
+        @Test
+        void scientificNotShortenedZero() {
+            assertEquals("0", JsMinifier.minify("0"));
+        }
+
+        @Test
+        void scientificAfterDotRemoval1000Point0() {
+            assertEquals("1e3", JsMinifier.minify("1000.0"));
+        }
+
+        @Test
+        void scientificAfterDotRemoval2000Point00() {
+            assertEquals("2e3", JsMinifier.minify("2000.00"));
+        }
+
+        @Test
+        void scientificTrailingDotPropertyAccess() {
+            assertEquals("1e3.toString()", JsMinifier.minify("1000.0.toString()"));
+        }
+
+        @Test
+        void scientificTrailingDotPropertyAccess100() {
+            assertEquals("1e2.valueOf()", JsMinifier.minify("100.0.valueOf()"));
+        }
+
+        @Test
+        void scientificWithSeparators1000000() {
+            assertEquals("1e6", JsMinifier.minify("1_000_000"));
+        }
+
+        @Test
+        void scientificWithSeparators10000() {
+            assertEquals("1e4", JsMinifier.minify("10_000"));
+        }
+
+        @Test
+        void scientificWithSeparators1000() {
+            assertEquals("1e3", JsMinifier.minify("1_000"));
+        }
+
+        @Test
+        void scientificHexNotConverted() {
+            assertEquals("0xff", JsMinifier.minify("0xff"));
+        }
+
+        @Test
+        void scientificOctalNotConverted() {
+            assertEquals("0o777", JsMinifier.minify("0o777"));
+        }
+
+        @Test
+        void scientificBinaryNotConverted() {
+            assertEquals("0b1010", JsMinifier.minify("0b1010"));
+        }
+
+        @Test
+        void scientificBigIntNotConverted() {
+            assertEquals("1000n", JsMinifier.minify("1000n"));
+        }
+
+        @Test
+        void scientificAlreadyHasExponent() {
+            assertEquals("1e5", JsMinifier.minify("1e5"));
+        }
+
+        @Test
+        void scientificUnaryMinus() {
+            assertEquals("-1e3", JsMinifier.minify("-1000"));
+        }
+
+        @Test
+        void scientificInArray() {
+            assertEquals("[1e3,2e3]", JsMinifier.minify("[1000, 2000]"));
+        }
+
+        @Test
+        void scientificInVarDecl() {
+            assertEquals("var x=1e6", JsMinifier.minify("var x = 1000000"));
+        }
+
+        @Test
+        void scientificIdempotent() {
+            assertEquals("1e3", JsMinifier.minify("1e3"));
+        }
+
+        @Test
+        void scientificDoubleMinifyStable() {
+            String once = JsMinifier.minify("1000000");
+            assertEquals("1e6", once);
+            assertEquals("1e6", JsMinifier.minify(once));
+        }
+
+        @Test
+        void scientificWithBooleanCoercion() {
+            assertEquals("!0+1e3", JsMinifier.minify("true + 1000"));
         }
     }
 
