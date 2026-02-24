@@ -11,6 +11,21 @@ public final class MinifierEngine {
             "throw", "new", "case", "yield", "await", "of"
     );
 
+    // Keywords after which [ starts an array/expression, NOT property access.
+    // Excludes value keywords: this, super, null (where [ IS property access).
+    private static final Set<String> NON_VALUE_KEYWORDS = Set.of(
+            "var", "let", "const",
+            "if", "else", "for", "while", "do", "switch", "with",
+            "try", "catch", "finally",
+            "class", "function",
+            "import", "export", "default", "debugger",
+            "return", "throw", "break", "continue",
+            "typeof", "void", "delete", "new",
+            "in", "instanceof", "of",
+            "yield", "await",
+            "case", "extends"
+    );
+
     private static final Set<String> ASI_KEYWORDS = Set.of(
             "return", "throw", "continue", "break", "yield"
     );
@@ -68,7 +83,7 @@ public final class MinifierEngine {
                 case REGEX_LITERAL -> processRegex();
             }
         }
-        return mergeConsecutiveDeclarations(out.toString());
+        return convertBracketToDot(mergeConsecutiveDeclarations(out.toString()));
     }
 
     // ── CODE state ──────────────────────────────────────────────────────
@@ -918,6 +933,147 @@ public final class MinifierEngine {
         }
 
         return result.toString();
+    }
+
+    // ── Bracket-to-dot property access conversion (post-pass) ────────
+
+    static String convertBracketToDot(String input) {
+        int len = input.length();
+        if (len == 0) return input;
+
+        StringBuilder result = new StringBuilder(len);
+        int i = 0;
+
+        while (i < len) {
+            char c = input.charAt(i);
+
+            // Skip string literals
+            if (c == '\'' || c == '"') {
+                int end = skipStringLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Skip template literals
+            if (c == '`') {
+                int end = skipTemplateLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Skip regex literals
+            if (c == '/' && i + 1 < len && isRegexStartInPostPass(input, result)) {
+                int end = skipRegexLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Check for bracket-to-dot conversion
+            if (c == '[' && !result.isEmpty()) {
+                char prev = result.charAt(result.length() - 1);
+                // Determine if preceding token ends an expression
+                boolean canConvert = prev == ')' || prev == ']'
+                        || prev == '`' || prev == '\'' || prev == '"';
+                if (!canConvert && isIdentPart(prev)) {
+                    // Identifier-like char: check it's not a bare integer or non-value keyword
+                    canConvert = !endsWithBareInteger(result)
+                            && !isPrecedingNonValueKeyword(result);
+                }
+                if (canConvert) {
+                    int afterBracket = i + 1;
+                    if (afterBracket < len) {
+                        char q = input.charAt(afterBracket);
+                        if (q == '\'' || q == '"') {
+                            int strEnd = skipStringLiteral(input, afterBracket);
+                            // Character after closing quote must be ]
+                            if (strEnd < len && input.charAt(strEnd) == ']') {
+                                String propName = input.substring(afterBracket + 1, strEnd - 1);
+                                // Skip if contains backslash (escape sequences)
+                                if (propName.indexOf('\\') < 0
+                                        && isValidDotProperty(propName)) {
+                                    result.append('.').append(propName);
+                                    i = strEnd + 1; // skip past ]
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            result.append(c);
+            i++;
+        }
+
+        return result.toString();
+    }
+
+    /**
+     * Check if the result buffer ends with a bare decimal integer (no dot, no exponent,
+     * no radix prefix). If so, appending "." would be ambiguous (could be decimal point).
+     * Examples: 42.prop is a syntax error, but 1.5.prop, 1e3.prop, 0xff.prop are valid.
+     */
+    private static boolean endsWithBareInteger(StringBuilder sb) {
+        int j = sb.length() - 1;
+        if (j < 0) return false;
+
+        char c = sb.charAt(j);
+        if (c < '0' || c > '9') return false;
+
+        // Scan backward through digits and numeric separators
+        while (j >= 0) {
+            c = sb.charAt(j);
+            if ((c >= '0' && c <= '9') || c == '_') {
+                j--;
+            } else {
+                break;
+            }
+        }
+
+        // All digits from the start → bare integer (like "42")
+        if (j < 0) return true;
+
+        c = sb.charAt(j);
+
+        // Check for exponent sign: +/- preceded by e/E (like 1e+3)
+        if ((c == '+' || c == '-') && j > 0) {
+            char before = sb.charAt(j - 1);
+            if (before == 'e' || before == 'E') {
+                return false; // Part of scientific notation
+            }
+        }
+
+        // If preceded by a dot or any identifier start char
+        // (covers exponent letters e/E, radix prefix x/X/o/O/b/B, identifier names)
+        if (c == '.' || isIdentStart(c)) return false;
+
+        // Otherwise it's a bare integer preceded by an operator/punctuator
+        return true;
+    }
+
+    private static boolean isPrecedingNonValueKeyword(StringBuilder sb) {
+        int end = sb.length();
+        int start = end - 1;
+        while (start > 0 && isIdentPart(sb.charAt(start - 1))) {
+            start--;
+        }
+        String word = sb.substring(start, end);
+        return NON_VALUE_KEYWORDS.contains(word);
+    }
+
+    private static boolean isValidDotProperty(String name) {
+        if (name.isEmpty()) return false;
+        char first = name.charAt(0);
+        // # is in isIdentStart but obj.#x is only valid inside owning class body
+        if (first == '#') return false;
+        if (!isIdentStart(first)) return false;
+        for (int i = 1; i < name.length(); i++) {
+            if (!isIdentPart(name.charAt(i))) return false;
+        }
+        return true;
     }
 
     private static String matchDeclKeyword(String input, int pos, int len) {

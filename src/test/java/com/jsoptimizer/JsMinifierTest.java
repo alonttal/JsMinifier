@@ -3233,6 +3233,843 @@ class JsMinifierTest {
         }
     }
 
+    // ── Bracket-to-Dot Property Access Conversion ─────────────────────
+
+    @Nested
+    class BracketToDotConversion {
+
+        // ── Basic conversions ───────────────────────────────────────────
+
+        @Test
+        void doubleQuoteProp() {
+            assertEquals("obj.prop", JsMinifier.minify("obj[\"prop\"]"));
+        }
+
+        @Test
+        void singleQuoteProp() {
+            assertEquals("obj.prop", JsMinifier.minify("obj['prop']"));
+        }
+
+        @Test
+        void shortIdentifier() {
+            assertEquals("a.x", JsMinifier.minify("a[\"x\"]"));
+        }
+
+        // ── Various preceding expressions ────────────────────────────────
+
+        @Test
+        void afterIdentifier() {
+            assertEquals("foo.bar", JsMinifier.minify("foo[\"bar\"]"));
+        }
+
+        @Test
+        void afterCloseParen() {
+            assertEquals("f().bar", JsMinifier.minify("f()[\"bar\"]"));
+        }
+
+        @Test
+        void afterCloseBracket() {
+            assertEquals("a[0].bar", JsMinifier.minify("a[0][\"bar\"]"));
+        }
+
+        @Test
+        void afterTemplateLiteral() {
+            assertEquals("`t`.bar", JsMinifier.minify("`t`[\"bar\"]"));
+        }
+
+        @Test
+        void afterStringLiteral() {
+            assertEquals("\"s\".length", JsMinifier.minify("\"s\"[\"length\"]"));
+        }
+
+        @Test
+        void afterSingleQuoteStringLiteral() {
+            assertEquals("'s'.length", JsMinifier.minify("'s'[\"length\"]"));
+        }
+
+        @Test
+        void afterThis() {
+            assertEquals("this.prop", JsMinifier.minify("this[\"prop\"]"));
+        }
+
+        @Test
+        void afterNewExpression() {
+            assertEquals("new Foo().bar", JsMinifier.minify("new Foo()[\"bar\"]"));
+        }
+
+        @Test
+        void afterNewWithArgs() {
+            assertEquals("new Foo(1,2).bar", JsMinifier.minify("new Foo(1, 2)[\"bar\"]"));
+        }
+
+        @Test
+        void afterParenWrappedFunctionExpression() {
+            assertEquals("(function(){}).call", JsMinifier.minify("(function(){})[\"call\"]"));
+        }
+
+        @Test
+        void afterRegexWithFlags() {
+            // /re/g — last char in result is 'g' (identPart) → converts
+            assertEquals("/re/g.source", JsMinifier.minify("/re/g[\"source\"]"));
+        }
+
+        // ── After number literals (bare integer safety) ──────────────────
+
+        @Test
+        void afterBareIntegerOne() {
+            // 1.toString is a syntax error — must NOT convert
+            assertEquals("1[\"toString\"]", JsMinifier.minify("1[\"toString\"]"));
+        }
+
+        @Test
+        void afterBareIntegerFortyTwo() {
+            assertEquals("42[\"toString\"]", JsMinifier.minify("42[\"toString\"]"));
+        }
+
+        @Test
+        void afterBareIntegerZero() {
+            assertEquals("0[\"toString\"]", JsMinifier.minify("0[\"toString\"]"));
+        }
+
+        @Test
+        void afterBareIntegerHundred() {
+            // 100 isn't shortened to scientific (same length), stays bare integer
+            assertEquals("100[\"toString\"]", JsMinifier.minify("100[\"toString\"]"));
+        }
+
+        @Test
+        void afterFloat() {
+            // 1.5.toFixed is valid JS — decimal point already present
+            assertEquals("1.5.toFixed", JsMinifier.minify("1.5[\"toFixed\"]"));
+        }
+
+        @Test
+        void afterLeadingDotFloat() {
+            // .5.toFixed is valid JS
+            assertEquals(".5.toFixed", JsMinifier.minify("0.5[\"toFixed\"]"));
+        }
+
+        @Test
+        void afterScientificNotation() {
+            // 1e3.toString is valid JS — exponent makes it unambiguous
+            assertEquals("1e3.toString", JsMinifier.minify("1000[\"toString\"]"));
+        }
+
+        @Test
+        void afterScientificWithPlusSign() {
+            // 1e+3.toString is valid JS
+            assertEquals("1e+3.toString", JsMinifier.minify("1e+3[\"toString\"]"));
+        }
+
+        @Test
+        void afterScientificWithMinusSign() {
+            assertEquals("1e-3.toString", JsMinifier.minify("1e-3[\"toString\"]"));
+        }
+
+        @Test
+        void afterHexLiteral() {
+            // 0xff.toString is valid JS — hex prefix makes it unambiguous
+            assertEquals("0xff.toString", JsMinifier.minify("0xff[\"toString\"]"));
+        }
+
+        @Test
+        void afterHexEndingInDigit() {
+            // 0x10 ends with digit '0' — but hex prefix makes it safe
+            assertEquals("0x10.toString", JsMinifier.minify("0x10[\"toString\"]"));
+        }
+
+        @Test
+        void afterOctalLiteral() {
+            assertEquals("0o77.toString", JsMinifier.minify("0o77[\"toString\"]"));
+        }
+
+        @Test
+        void afterBinaryLiteral() {
+            assertEquals("0b10.toString", JsMinifier.minify("0b10[\"toString\"]"));
+        }
+
+        @Test
+        void afterDoubleDotNumber() {
+            // 1..toString() — in minified output, 1. has a trailing dot so 1..prop is fine
+            // but this is already dot notation, not bracket access
+            assertEquals("1..toString()", JsMinifier.minify("1..toString()"));
+        }
+
+        @Test
+        void afterIdentifierEndingWithDigit() {
+            // myVar2 is an identifier, not a number — should convert
+            assertEquals("myVar2.prop", JsMinifier.minify("myVar2[\"prop\"]"));
+        }
+
+        @Test
+        void afterNumericSeparatorBareInteger() {
+            // 1_0 stays as 1_0 (1e1 not shorter), and it's a bare integer — must NOT convert
+            assertEquals("1_0[\"toString\"]", JsMinifier.minify("1_0[\"toString\"]"));
+        }
+
+        @Test
+        void afterParenWrappedInteger() {
+            // (42)["toString"] → prev char is ')' → converts safely
+            assertEquals("(42).toString", JsMinifier.minify("(42)[\"toString\"]"));
+        }
+
+        // ── NOT converted — invalid identifiers ─────────────────────────
+
+        @Test
+        void hyphenatedProperty() {
+            assertEquals("obj[\"foo-bar\"]", JsMinifier.minify("obj[\"foo-bar\"]"));
+        }
+
+        @Test
+        void spaceInProperty() {
+            assertEquals("obj[\"foo bar\"]", JsMinifier.minify("obj[\"foo bar\"]"));
+        }
+
+        @Test
+        void digitStartProperty() {
+            assertEquals("obj[\"123\"]", JsMinifier.minify("obj[\"123\"]"));
+        }
+
+        @Test
+        void singleDigitProperty() {
+            assertEquals("obj[\"0\"]", JsMinifier.minify("obj[\"0\"]"));
+        }
+
+        @Test
+        void emptyStringProperty() {
+            assertEquals("obj[\"\"]", JsMinifier.minify("obj[\"\"]"));
+        }
+
+        @Test
+        void digitThenLetters() {
+            assertEquals("obj[\"1abc\"]", JsMinifier.minify("obj[\"1abc\"]"));
+        }
+
+        @Test
+        void plusCharProperty() {
+            assertEquals("obj[\"+\"]", JsMinifier.minify("obj[\"+\"]"));
+        }
+
+        @Test
+        void dotCharProperty() {
+            assertEquals("obj[\".\"]", JsMinifier.minify("obj[\".\"]"));
+        }
+
+        @Test
+        void spaceCharProperty() {
+            assertEquals("obj[\" \"]", JsMinifier.minify("obj[\" \"]"));
+        }
+
+        // ── NOT converted — not string literal ──────────────────────────
+
+        @Test
+        void variableIndex() {
+            assertEquals("obj[prop]", JsMinifier.minify("obj[prop]"));
+        }
+
+        @Test
+        void numericIndex() {
+            assertEquals("obj[0]", JsMinifier.minify("obj[0]"));
+        }
+
+        @Test
+        void expressionIndex() {
+            assertEquals("obj[f()]", JsMinifier.minify("obj[f()]"));
+        }
+
+        @Test
+        void binaryExpressionIndex() {
+            assertEquals("obj[a+b]", JsMinifier.minify("obj[a + b]"));
+        }
+
+        @Test
+        void templateLiteralIndex() {
+            assertEquals("obj[`key`]", JsMinifier.minify("obj[`key`]"));
+        }
+
+        // ── NOT converted — not property access context ──────────────────
+
+        @Test
+        void arrayLiteral() {
+            assertEquals("[\"a\",\"b\"]", JsMinifier.minify("[\"a\",\"b\"]"));
+        }
+
+        @Test
+        void semicolonThenBracket() {
+            assertEquals(";[\"a\"]", JsMinifier.minify(";[\"a\"]"));
+        }
+
+        @Test
+        void assignmentThenBracket() {
+            assertEquals("=[\"a\"]", JsMinifier.minify("=[\"a\"]"));
+        }
+
+        @Test
+        void afterPlus() {
+            assertEquals("a+[\"b\"]", JsMinifier.minify("a + [\"b\"]"));
+        }
+
+        @Test
+        void afterMinus() {
+            assertEquals("a-[\"b\"]", JsMinifier.minify("a - [\"b\"]"));
+        }
+
+        @Test
+        void afterStar() {
+            assertEquals("a*[\"b\"]", JsMinifier.minify("a * [\"b\"]"));
+        }
+
+        @Test
+        void afterColon() {
+            assertEquals("{key:[\"a\"]}", JsMinifier.minify("{ key: [\"a\"] }"));
+        }
+
+        @Test
+        void afterQuestionMark() {
+            assertEquals("x?[\"a\"]:y", JsMinifier.minify("x ? [\"a\"] : y"));
+        }
+
+        @Test
+        void afterComma() {
+            assertEquals("f(a,[\"b\"])", JsMinifier.minify("f(a, [\"b\"])"));
+        }
+
+        @Test
+        void afterOpenParen() {
+            assertEquals("([\"a\"])", JsMinifier.minify("([\"a\"])"));
+        }
+
+        @Test
+        void afterOpenBracket() {
+            assertEquals("[[\"a\"]]", JsMinifier.minify("[[\"a\"]]"));
+        }
+
+        @Test
+        void afterReturnKeyword() {
+            assertEquals("return[\"a\"]", JsMinifier.minify("return [\"a\"]"));
+        }
+
+        @Test
+        void bracketAtStartOfInput() {
+            assertEquals("[\"prop\"]", JsMinifier.minify("[\"prop\"]"));
+        }
+
+        // ── NOT converted — after } (ambiguous) ─────────────────────────
+
+        @Test
+        void afterCloseBrace() {
+            assertEquals("{}[\"x\"]", JsMinifier.minify("{}[\"x\"]"));
+        }
+
+        @Test
+        void afterFunctionBrace() {
+            // (function(){})["call"] — prev char to [ is ), which IS expression-ending → converts
+            assertEquals("(function(){}).call",
+                    JsMinifier.minify("(function(){})[\"call\"]"));
+        }
+
+        // ── Optional chaining (should NOT convert) ───────────────────────
+
+        @Test
+        void optionalBracketAccess() {
+            // obj?.["prop"] — prev char is '.', not in expression-ending list
+            assertEquals("obj?.[\"prop\"]", JsMinifier.minify("obj?.[\"prop\"]"));
+        }
+
+        @Test
+        void optionalBracketAfterOptionalDot() {
+            assertEquals("obj?.a?.[\"b\"]", JsMinifier.minify("obj?.a?.[\"b\"]"));
+        }
+
+        @Test
+        void normalBracketAfterOptionalDot() {
+            // obj?.prop["name"] — prev char is 'p' (identPart) → converts
+            assertEquals("obj?.prop.name", JsMinifier.minify("obj?.prop[\"name\"]"));
+        }
+
+        // ── Computed property names in object/class (should NOT convert) ──
+
+        @Test
+        void computedPropertyInObject() {
+            // { ["key"]: val } — prev char is '{', not expression-ending
+            assertEquals("{[\"key\"]:val}", JsMinifier.minify("{ [\"key\"]: val }"));
+        }
+
+        @Test
+        void computedPropertyAfterComma() {
+            assertEquals("{a:1,[\"key\"]:2}", JsMinifier.minify("{ a: 1, [\"key\"]: 2 }"));
+        }
+
+        // ── Escaped strings skipped ──────────────────────────────────────
+
+        @Test
+        void escapedSingleQuoteInProp() {
+            assertEquals("obj[\"it\\'s\"]", JsMinifier.minify("obj[\"it\\'s\"]"));
+        }
+
+        @Test
+        void escapedBackslashInProp() {
+            assertEquals("obj[\"a\\\\b\"]", JsMinifier.minify("obj[\"a\\\\b\"]"));
+        }
+
+        @Test
+        void escapedNewlineInProp() {
+            assertEquals("obj[\"a\\nb\"]", JsMinifier.minify("obj[\"a\\nb\"]"));
+        }
+
+        @Test
+        void escapedUnicodeInProp() {
+            assertEquals("obj[\"\\u0041\"]", JsMinifier.minify("obj[\"\\u0041\"]"));
+        }
+
+        // ── Strings/regex/templates not broken ───────────────────────────
+
+        @Test
+        void bracketInsideString() {
+            // String quote optimizer swaps to single quotes (2 escaped " → 0)
+            assertEquals("'obj[\"prop\"]'", JsMinifier.minify("\"obj[\\\"prop\\\"]\""));
+        }
+
+        @Test
+        void bracketInsideSingleQuoteString() {
+            assertEquals("'obj[\"prop\"]'", JsMinifier.minify("'obj[\"prop\"]'"));
+        }
+
+        @Test
+        void bracketInsideTemplate() {
+            assertEquals("`obj[\"prop\"]`", JsMinifier.minify("`obj[\"prop\"]`"));
+        }
+
+        @Test
+        void bracketInsideRegex() {
+            assertEquals("var x=/obj\\[\"prop\"\\]/;", JsMinifier.minify("var x = /obj\\[\"prop\"\\]/;"));
+        }
+
+        @Test
+        void bracketInsideRegexCharClass() {
+            assertEquals("var x=/[\"']/;", JsMinifier.minify("var x = /[\"']/;"));
+        }
+
+        // ── Mixed quote types ────────────────────────────────────────────
+
+        @Test
+        void mixedQuotesChaining() {
+            assertEquals("obj.a.b", JsMinifier.minify("obj['a'][\"b\"]"));
+        }
+
+        @Test
+        void alternatingQuotes() {
+            assertEquals("obj.a.b.c", JsMinifier.minify("obj[\"a\"]['b'][\"c\"]"));
+        }
+
+        // ── Chained conversions ──────────────────────────────────────────
+
+        @Test
+        void twoChained() {
+            assertEquals("obj.a.b", JsMinifier.minify("obj[\"a\"][\"b\"]"));
+        }
+
+        @Test
+        void threeChained() {
+            assertEquals("obj.a.b.c", JsMinifier.minify("obj[\"a\"][\"b\"][\"c\"]"));
+        }
+
+        @Test
+        void chainedWithNumericIndex() {
+            assertEquals("a[0].b.c", JsMinifier.minify("a[0][\"b\"][\"c\"]"));
+        }
+
+        @Test
+        void mixedDotAndBracketChain() {
+            assertEquals("a.b.c.d.e", JsMinifier.minify("a.b[\"c\"].d[\"e\"]"));
+        }
+
+        @Test
+        void longMixedChain() {
+            assertEquals("a.b.c.d.e.f", JsMinifier.minify("a[\"b\"].c[\"d\"].e[\"f\"]"));
+        }
+
+        @Test
+        void chainAfterFunctionCall() {
+            assertEquals("a().b.c", JsMinifier.minify("a()[\"b\"][\"c\"]"));
+        }
+
+        // ── Multiple bracket accesses with operators ─────────────────────
+
+        @Test
+        void additionOfBracketResults() {
+            assertEquals("a.x+b.y", JsMinifier.minify("a[\"x\"]+b[\"y\"]"));
+        }
+
+        @Test
+        void comparisonOfBracketResults() {
+            assertEquals("a.x===b.y", JsMinifier.minify("a[\"x\"]===b[\"y\"]"));
+        }
+
+        @Test
+        void ternaryWithBracketResults() {
+            assertEquals("a.x?b.y:c.z", JsMinifier.minify("a[\"x\"]?b[\"y\"]:c[\"z\"]"));
+        }
+
+        @Test
+        void logicalAndBracketResults() {
+            assertEquals("a.x&&b.y||c.z", JsMinifier.minify("a[\"x\"]&&b[\"y\"]||c[\"z\"]"));
+        }
+
+        // ── Inside template expressions ──────────────────────────────────
+        // Note: skipTemplateLiteral skips the entire template including ${...}
+        // expressions, so bracket accesses inside templates are NOT converted
+        // by the post-pass. This is a conservative but safe behavior.
+
+        @Test
+        void bracketInTemplateExpression() {
+            assertEquals("`${obj[\"prop\"]}`", JsMinifier.minify("`${obj[\"prop\"]}`"));
+        }
+
+        @Test
+        void multipleBracketsInTemplate() {
+            assertEquals("`${a[\"x\"]} ${b[\"y\"]}`", JsMinifier.minify("`${a[\"x\"]} ${b[\"y\"]}`"));
+        }
+
+        @Test
+        void bracketWithOperatorsInTemplate() {
+            assertEquals("`${a[\"x\"]+b[\"y\"]}`", JsMinifier.minify("`${a[\"x\"]+b[\"y\"]}`"));
+        }
+
+        // ── Interaction with other features ──────────────────────────────
+
+        @Test
+        void inVarDeclaration() {
+            assertEquals("var a=obj.prop;", JsMinifier.minify("var a=obj[\"prop\"];"));
+        }
+
+        @Test
+        void declarationMergingAndBracket() {
+            assertEquals("var a=x.p,b=y.q;",
+                    JsMinifier.minify("var a=x[\"p\"];var b=y[\"q\"];"));
+        }
+
+        @Test
+        void afterBooleanShortening() {
+            // true → !0, then !0["toString"] — prev char '0' is a bare integer
+            // but !0 as a whole isn't numeric property access; prev to [ is '0' which is digit
+            // 0.toString would be ambiguous → don't convert
+            assertEquals("!0[\"toString\"]", JsMinifier.minify("true[\"toString\"]"));
+        }
+
+        @Test
+        void afterInfinityShortening() {
+            // Infinity → (1/0), then (1/0)["toString"] → prev is ')' → converts
+            assertEquals("(1/0).toString", JsMinifier.minify("Infinity[\"toString\"]"));
+        }
+
+        @Test
+        void bracketAfterScientificFromLargeNumber() {
+            // 1000 → 1e3, then 1e3["toString"] → converts (exponent is safe)
+            assertEquals("1e3.toString", JsMinifier.minify("1000[\"toString\"]"));
+        }
+
+        @Test
+        void bracketAfterQuoteOptimizedString() {
+            // String gets quotes swapped, then bracket converted
+            assertEquals("'he said \"hi\"'.length",
+                    JsMinifier.minify("\"he said \\\"hi\\\"\"[\"length\"]"));
+        }
+
+        @Test
+        void threeVarsWithBracketAccess() {
+            assertEquals("var a=x.p,b=y.q,c=z.r;",
+                    JsMinifier.minify("var a = x[\"p\"]; var b = y[\"q\"]; var c = z[\"r\"];"));
+        }
+
+        // ── Reserved words as properties (valid in ES5+) ─────────────────
+
+        @Test
+        void reservedWordClass() {
+            assertEquals("obj.class", JsMinifier.minify("obj[\"class\"]"));
+        }
+
+        @Test
+        void reservedWordReturn() {
+            assertEquals("obj.return", JsMinifier.minify("obj[\"return\"]"));
+        }
+
+        @Test
+        void reservedWordIf() {
+            assertEquals("obj.if", JsMinifier.minify("obj[\"if\"]"));
+        }
+
+        @Test
+        void reservedWordVar() {
+            assertEquals("obj.var", JsMinifier.minify("obj[\"var\"]"));
+        }
+
+        @Test
+        void reservedWordDelete() {
+            assertEquals("obj.delete", JsMinifier.minify("obj[\"delete\"]"));
+        }
+
+        @Test
+        void reservedWordNew() {
+            assertEquals("obj.new", JsMinifier.minify("obj[\"new\"]"));
+        }
+
+        @Test
+        void reservedWordThis() {
+            assertEquals("obj.this", JsMinifier.minify("obj[\"this\"]"));
+        }
+
+        @Test
+        void reservedWordSuper() {
+            assertEquals("obj.super", JsMinifier.minify("obj[\"super\"]"));
+        }
+
+        @Test
+        void reservedWordAwait() {
+            assertEquals("obj.await", JsMinifier.minify("obj[\"await\"]"));
+        }
+
+        @Test
+        void reservedWordYield() {
+            assertEquals("obj.yield", JsMinifier.minify("obj[\"yield\"]"));
+        }
+
+        // ── Built-in property names ──────────────────────────────────────
+
+        @Test
+        void constructorProperty() {
+            assertEquals("obj.constructor", JsMinifier.minify("obj[\"constructor\"]"));
+        }
+
+        @Test
+        void prototypeProperty() {
+            assertEquals("obj.prototype", JsMinifier.minify("obj[\"prototype\"]"));
+        }
+
+        @Test
+        void dunderProtoProperty() {
+            assertEquals("obj.__proto__", JsMinifier.minify("obj[\"__proto__\"]"));
+        }
+
+        @Test
+        void hasOwnPropertyProperty() {
+            assertEquals("obj.hasOwnProperty", JsMinifier.minify("obj[\"hasOwnProperty\"]"));
+        }
+
+        @Test
+        void toStringProperty() {
+            assertEquals("obj.toString", JsMinifier.minify("obj[\"toString\"]"));
+        }
+
+        // ── Unicode identifiers ──────────────────────────────────────────
+
+        @Test
+        void unicodeProperty() {
+            assertEquals("obj.café", JsMinifier.minify("obj[\"café\"]"));
+        }
+
+        @Test
+        void cjkProperty() {
+            assertEquals("obj.日本", JsMinifier.minify("obj[\"日本\"]"));
+        }
+
+        // ── Single character special identifiers ─────────────────────────
+
+        @Test
+        void singleUnderscore() {
+            assertEquals("obj._", JsMinifier.minify("obj[\"_\"]"));
+        }
+
+        @Test
+        void singleDollar() {
+            assertEquals("obj.$", JsMinifier.minify("obj[\"$\"]"));
+        }
+
+        @Test
+        void dollarUnderscore() {
+            assertEquals("obj.$_", JsMinifier.minify("obj[\"$_\"]"));
+        }
+
+        @Test
+        void identifierWithDigits() {
+            assertEquals("obj.abc123", JsMinifier.minify("obj[\"abc123\"]"));
+        }
+
+        // ── Idempotency ─────────────────────────────────────────────────
+
+        @Test
+        void alreadyDotNotation() {
+            assertEquals("obj.prop", JsMinifier.minify("obj.prop"));
+        }
+
+        @Test
+        void doubleMinifyStability() {
+            String input = "obj[\"prop\"]";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+
+        @Test
+        void doubleMinifyChained() {
+            String input = "obj[\"a\"][\"b\"][\"c\"]";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+
+        @Test
+        void doubleMinifyBareInteger() {
+            String input = "42[\"toString\"]";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+
+        @Test
+        void doubleMinifyMixedChain() {
+            String input = "a.b[\"c\"].d[\"e\"]";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+
+        @Test
+        void doubleMinifyWithOperators() {
+            String input = "a[\"x\"] + b[\"y\"] === c[\"z\"]";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+
+        @Test
+        void doubleMinifyInTemplate() {
+            // Templates are skipped by post-pass, but still must be idempotent
+            String input = "`${a[\"x\"]} ${b[\"y\"]}`";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+
+        // ── Edge cases ──────────────────────────────────────────────────
+
+        @Test
+        void bracketAtEndOfInput() {
+            assertEquals("obj.prop", JsMinifier.minify("obj[\"prop\"]"));
+        }
+
+        @Test
+        void singleCharProperty() {
+            assertEquals("obj.x", JsMinifier.minify("obj[\"x\"]"));
+        }
+
+        @Test
+        void underscoreProperty() {
+            assertEquals("obj._priv", JsMinifier.minify("obj[\"_priv\"]"));
+        }
+
+        @Test
+        void dollarProperty() {
+            assertEquals("obj.$x", JsMinifier.minify("obj[\"$x\"]"));
+        }
+
+        @Test
+        void privateFieldNotConverted() {
+            assertEquals("obj[\"#x\"]", JsMinifier.minify("obj[\"#x\"]"));
+        }
+
+        @Test
+        void longPropertyName() {
+            assertEquals("obj.abcdefghijklmnopqrstuvwxyz",
+                    JsMinifier.minify("obj[\"abcdefghijklmnopqrstuvwxyz\"]"));
+        }
+
+        @Test
+        void afterVoidExpression() {
+            // void 0["prop"] — prev char '0' is a bare integer, don't convert
+            // (this is void (0["prop"]), which is weird but valid)
+            assertEquals("void 0[\"prop\"]", JsMinifier.minify("void 0[\"prop\"]"));
+        }
+
+        @Test
+        void afterNullLiteral() {
+            // null["prop"] — prev char 'l', identPart → converts
+            // (runtime error but syntactically valid)
+            assertEquals("null.prop", JsMinifier.minify("null[\"prop\"]"));
+        }
+
+        @Test
+        void afterUnaryNotOnExpression() {
+            // !obj["prop"] — the [ is preceded by ] from "obj", wait no...
+            // Actually: !obj["prop"] — minified is !obj["prop"]
+            // The prev char to [ is 'j' (from obj) → identPart → converts
+            assertEquals("!obj.prop", JsMinifier.minify("!obj[\"prop\"]"));
+        }
+
+        @Test
+        void negationOfArray() {
+            // !["a"] — prev char is '!', not expression-ending → NOT converted
+            assertEquals("![\"a\"]", JsMinifier.minify("![\"a\"]"));
+        }
+
+        @Test
+        void bitwiseNotBeforeArray() {
+            assertEquals("~[\"a\"]", JsMinifier.minify("~[\"a\"]"));
+        }
+
+        @Test
+        void afterIncrementOperator() {
+            // x++["toString"] — prev char is '+', not in expression-ending list
+            // → NOT converted (this is a conservative choice)
+            assertEquals("x++[\"toString\"]", JsMinifier.minify("x++[\"toString\"]"));
+        }
+
+        @Test
+        void afterDecrementOperator() {
+            assertEquals("x--[\"toString\"]", JsMinifier.minify("x--[\"toString\"]"));
+        }
+
+        @Test
+        void afterRegexNoFlags() {
+            // /re/["source"] — prev char is '/', not expression-ending → NOT converted
+            assertEquals("/re/[\"source\"]", JsMinifier.minify("/re/[\"source\"]"));
+        }
+
+        // ── Comprehensive double-minify ──────────────────────────────────
+
+        @Test
+        void doubleMinifyAllFeatures() {
+            String input = "var a = obj[\"prop\"]; var b = arr[0][\"name\"]; var c = f()[\"result\"];";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyAllInteractions() {
+            String input = "var a = 1000; var b = obj[\"prop\"]; var c = true; var d = arr[0][\"name\"];";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyOptionalChaining() {
+            String input = "obj?.[\"prop\"]";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+
+        @Test
+        void doubleMinifyBareIntegersAllSizes() {
+            String input = "0[\"a\"];1[\"b\"];42[\"c\"];100[\"d\"];999[\"e\"]";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+    }
+
     // ── Performance ──────────────────────────────────────────────────────
 
     @Nested
