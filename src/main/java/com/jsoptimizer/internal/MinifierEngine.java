@@ -83,7 +83,7 @@ public final class MinifierEngine {
                 case REGEX_LITERAL -> processRegex();
             }
         }
-        return removeRedundantReturn(convertBracketToDot(mergeConsecutiveDeclarations(out.toString())));
+        return shortenArrowBodies(removeRedundantReturn(convertBracketToDot(mergeConsecutiveDeclarations(out.toString()))));
     }
 
     // ── CODE state ──────────────────────────────────────────────────────
@@ -1276,6 +1276,202 @@ public final class MinifierEngine {
         if (!sb.isEmpty() && sb.charAt(sb.length() - 1) == ';') {
             sb.setLength(sb.length() - 1);
         }
+    }
+
+    // ── Arrow body shortening (post-pass) ─────────────────────────────
+
+    static String shortenArrowBodies(String input) {
+        int len = input.length();
+        if (len == 0) return input;
+
+        StringBuilder result = new StringBuilder(len);
+        int i = 0;
+
+        while (i < len) {
+            char c = input.charAt(i);
+
+            // Skip string literals
+            if (c == '\'' || c == '"') {
+                int end = skipStringLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Skip template literals
+            if (c == '`') {
+                int end = skipTemplateLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Skip regex literals
+            if (c == '/' && i + 1 < len && isRegexStartInPostPass(input, result)) {
+                int end = skipRegexLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Detect => followed by {return
+            if (c == '=' && i + 1 < len && input.charAt(i + 1) == '>') {
+                result.append("=>");
+                i += 2;
+                // Check for {return pattern
+                if (i < len && input.charAt(i) == '{') {
+                    int braceStart = i;
+                    // Check if next chars are "return"
+                    if (i + 7 <= len && input.startsWith("return", i + 1)) {
+                        int afterReturn = i + 7; // position after "{return"
+                        if (afterReturn < len) {
+                            char nextCh = input.charAt(afterReturn);
+                            int exprStart;
+                            if (nextCh == ' ') {
+                                exprStart = afterReturn + 1;
+                            } else if (!isIdentPart(nextCh)) {
+                                exprStart = afterReturn;
+                            } else {
+                                // It's something like "returnValue" — not our pattern
+                                // We already appended "=>", just emit '{' and continue
+                                result.append('{');
+                                i++;
+                                continue;
+                            }
+                            // Find the matching } for the opening {
+                            int matchResult = findMatchingBrace(input, braceStart, exprStart);
+                            if (matchResult >= 0) {
+                                int closeBrace = matchResult >>> 1;
+                                boolean hasTopLevelComma = (matchResult & 1) != 0;
+                                // Extract the expression (without trailing semicolons)
+                                String expr = input.substring(exprStart, closeBrace);
+                                // Strip trailing semicolons
+                                while (!expr.isEmpty() && expr.charAt(expr.length() - 1) == ';') {
+                                    expr = expr.substring(0, expr.length() - 1);
+                                }
+                                if (expr.isEmpty()) {
+                                    // =>{return} with no expr — shouldn't happen after removeRedundantReturn
+                                    result.append(input, braceStart, closeBrace + 1);
+                                    i = closeBrace + 1;
+                                    continue;
+                                }
+                                // Recursively shorten nested arrows in the expression
+                                expr = shortenArrowBodies(expr);
+                                // Determine if wrapping in parens is needed
+                                boolean needsParens = false;
+                                if (expr.charAt(0) == '{') {
+                                    needsParens = true; // object literal
+                                } else if (hasTopLevelComma) {
+                                    needsParens = true; // comma operator
+                                }
+                                if (needsParens) {
+                                    result.append('(').append(expr).append(')');
+                                } else {
+                                    result.append(expr);
+                                }
+                                i = closeBrace + 1;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            result.append(c);
+            i++;
+        }
+
+        return result.toString();
+    }
+
+    /**
+     * Find the matching closing brace for the opening brace at bracePos.
+     * Scans from exprStart (after the "return " part).
+     * Returns -1 if the body contains multiple statements (semicolon at top-level before the close).
+     * Otherwise returns (closeBracePos << 1) | hasTopLevelComma.
+     */
+    private static int findMatchingBrace(String input, int bracePos, int exprStart) {
+        int len = input.length();
+        int curlyDepth = 1; // the opening { at bracePos
+        int parenDepth = 0;
+        int bracketDepth = 0;
+        boolean hasTopLevelComma = false;
+
+        int i = exprStart;
+        while (i < len) {
+            char c = input.charAt(i);
+
+            // Skip string literals
+            if (c == '\'' || c == '"') {
+                i = skipStringLiteral(input, i);
+                continue;
+            }
+
+            // Skip template literals
+            if (c == '`') {
+                i = skipTemplateLiteral(input, i);
+                continue;
+            }
+
+            // Skip regex literals
+            if (c == '/' && i + 1 < len && isRegexStartAtPosition(input, i)) {
+                i = skipRegexLiteral(input, i);
+                continue;
+            }
+
+            if (c == '(') { parenDepth++; }
+            else if (c == ')') { if (parenDepth > 0) parenDepth--; }
+            else if (c == '[') { bracketDepth++; }
+            else if (c == ']') { if (bracketDepth > 0) bracketDepth--; }
+            else if (c == '{') { curlyDepth++; }
+            else if (c == '}') {
+                curlyDepth--;
+                if (curlyDepth == 0) {
+                    // Found matching brace
+                    return (i << 1) | (hasTopLevelComma ? 1 : 0);
+                }
+            }
+
+            // Semicolon at top level of the arrow body means multiple statements
+            if (c == ';' && curlyDepth == 1 && parenDepth == 0 && bracketDepth == 0) {
+                // Check if this semicolon is followed by the closing brace (trailing semicolon)
+                int next = i + 1;
+                if (next < len && input.charAt(next) == '}') {
+                    // Trailing semicolon before } — that's fine, single statement
+                    i++;
+                    continue;
+                }
+                return -1; // multiple statements
+            }
+
+            // Track top-level commas (inside the arrow body's single expression)
+            if (c == ',' && curlyDepth == 1 && parenDepth == 0 && bracketDepth == 0) {
+                hasTopLevelComma = true;
+            }
+
+            i++;
+        }
+        return -1; // unmatched
+    }
+
+    /**
+     * Regex/division disambiguation for forward scanning in post-passes.
+     * Looks at the character before pos to determine if / starts a regex.
+     */
+    private static boolean isRegexStartAtPosition(String input, int pos) {
+        if (pos == 0) return true;
+        char prev = input.charAt(pos - 1);
+        if (prev == ')' || prev == ']' || prev == '}') return false;
+        if (isIdentPart(prev)) {
+            int start = pos - 1;
+            while (start > 0 && isIdentPart(input.charAt(start - 1))) {
+                start--;
+            }
+            String word = input.substring(start, pos);
+            return REGEX_PRECEDING_KEYWORDS.contains(word);
+        }
+        return true;
     }
 
     private static String matchDeclKeyword(String input, int pos, int len) {

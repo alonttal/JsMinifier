@@ -2587,7 +2587,7 @@ class JsMinifierTest {
 
         @Test
         void arrowFunction() {
-            assertEquals("const f=()=>{return 1};", JsMinifier.minify("const f = () => { return 1; };"));
+            assertEquals("const f=()=>1;", JsMinifier.minify("const f = () => { return 1; };"));
         }
 
         @Test
@@ -2878,7 +2878,7 @@ class JsMinifierTest {
 
         @Test
         void arrowWithBlockBody() {
-            assertEquals("var a=()=>{return 1},b=2;",
+            assertEquals("var a=()=>1,b=2;",
                     JsMinifier.minify("var a=()=>{return 1};var b=2;"));
         }
 
@@ -4483,6 +4483,967 @@ class JsMinifierTest {
         @Test
         void setterNotConverted() {
             assertEquals("var o={set x(v){return}}", JsMinifier.minify("var o = { set x(v){ return; } }"));
+        }
+    }
+
+    // ── Arrow Body Shortening ──────────────────────────────────────────
+
+    @Nested
+    class ArrowBodyShortening {
+
+        // ── Basic conversions ───────────────────────────────────────────
+
+        @Test
+        void returnNumber() {
+            assertEquals("()=>1", JsMinifier.minify("() => { return 1; }"));
+        }
+
+        @Test
+        void returnExpressionWithParam() {
+            assertEquals("(x)=>x+1", JsMinifier.minify("(x) => { return x + 1; }"));
+        }
+
+        @Test
+        void singleParam() {
+            assertEquals("x=>x", JsMinifier.minify("x => { return x; }"));
+        }
+
+        @Test
+        void returnString() {
+            assertEquals("()=>\"hello\"", JsMinifier.minify("() => { return \"hello\"; }"));
+        }
+
+        @Test
+        void returnTemplateLiteral() {
+            assertEquals("(x)=>`val:${x}`", JsMinifier.minify("(x) => { return `val:${x}`; }"));
+        }
+
+        @Test
+        void returnFunctionCall() {
+            assertEquals("()=>doStuff()", JsMinifier.minify("() => { return doStuff(); }"));
+        }
+
+        @Test
+        void returnTernary() {
+            assertEquals("(x)=>x?1:2", JsMinifier.minify("(x) => { return x ? 1 : 2; }"));
+        }
+
+        @Test
+        void returnTrue() {
+            assertEquals("()=>!0", JsMinifier.minify("() => { return true; }"));
+        }
+
+        @Test
+        void returnUndefined() {
+            // removeRedundantReturn already converts "return void 0" → empty
+            assertEquals("()=>{}", JsMinifier.minify("() => { return undefined; }"));
+        }
+
+        @Test
+        void returnArray() {
+            assertEquals("()=>[1,2,3]", JsMinifier.minify("() => { return [1, 2, 3]; }"));
+        }
+
+        @Test
+        void returnNewExpression() {
+            assertEquals("()=>new Foo()", JsMinifier.minify("() => { return new Foo(); }"));
+        }
+
+        // ── Object literal returns (wrapped in parens) ──────────────────
+
+        @Test
+        void returnObjectLiteral() {
+            assertEquals("()=>({x:1})", JsMinifier.minify("() => { return {x: 1}; }"));
+        }
+
+        @Test
+        void returnEmptyObject() {
+            assertEquals("()=>({})", JsMinifier.minify("() => { return {}; }"));
+        }
+
+        @Test
+        void returnNestedObject() {
+            assertEquals("()=>({a:{b:1}})", JsMinifier.minify("() => { return {a: {b: 1}}; }"));
+        }
+
+        // ── Comma expressions (wrapped in parens) ───────────────────────
+
+        @Test
+        void returnCommaExpression() {
+            assertEquals("()=>(a,b)", JsMinifier.minify("() => { return a, b; }"));
+        }
+
+        @Test
+        void returnTripleComma() {
+            assertEquals("()=>(a,b,c)", JsMinifier.minify("() => { return a, b, c; }"));
+        }
+
+        @Test
+        void commaInsideParensNotWrapped() {
+            assertEquals("()=>foo(a,b)", JsMinifier.minify("() => { return foo(a, b); }"));
+        }
+
+        @Test
+        void commaInsideArrayNotWrapped() {
+            assertEquals("()=>[a,b]", JsMinifier.minify("() => { return [a, b]; }"));
+        }
+
+        // ── Must NOT shorten ────────────────────────────────────────────
+
+        @Test
+        void multipleStatements() {
+            assertEquals("()=>{doStuff();return 1}", JsMinifier.minify("() => { doStuff(); return 1; }"));
+        }
+
+        @Test
+        void bareReturnAlreadyHandled() {
+            assertEquals("()=>{}", JsMinifier.minify("() => { return; }"));
+        }
+
+        @Test
+        void emptyBody() {
+            assertEquals("()=>{}", JsMinifier.minify("() => {}"));
+        }
+
+        @Test
+        void nonReturnSingleStatement() {
+            assertEquals("()=>{doStuff()}", JsMinifier.minify("() => { doStuff(); }"));
+        }
+
+        @Test
+        void regularFunction() {
+            assertEquals("function f(){return 1}", JsMinifier.minify("function f(){ return 1; }"));
+        }
+
+        // ── Nested arrows ───────────────────────────────────────────────
+
+        @Test
+        void nestedArrow() {
+            assertEquals("()=>()=>1", JsMinifier.minify("() => { return () => { return 1; }; }"));
+        }
+
+        @Test
+        void nestedArrowWithObject() {
+            assertEquals("()=>()=>({x:1})", JsMinifier.minify("() => { return () => { return {x:1}; }; }"));
+        }
+
+        @Test
+        void tripleNestedArrow() {
+            assertEquals("()=>()=>()=>1", JsMinifier.minify("() => { return () => { return () => { return 1; }; }; }"));
+        }
+
+        // ── Async arrows ────────────────────────────────────────────────
+
+        @Test
+        void asyncArrow() {
+            assertEquals("async(x)=>await x", JsMinifier.minify("async (x) => { return await x; }"));
+        }
+
+        // ── Regex/special char after return ─────────────────────────────
+
+        @Test
+        void returnRegex() {
+            assertEquals("()=>/pattern/g", JsMinifier.minify("() => { return /pattern/g; }"));
+        }
+
+        // ── String/regex in expression ──────────────────────────────────
+
+        @Test
+        void returnStringWithBraces() {
+            assertEquals("()=>\"{not obj}\"", JsMinifier.minify("() => { return \"{not obj}\"; }"));
+        }
+
+        @Test
+        void returnRegexLiteral() {
+            assertEquals("()=>/x/g", JsMinifier.minify("() => { return /x/g; }"));
+        }
+
+        // ── Interaction with other features ─────────────────────────────
+
+        @Test
+        void interactionWithDeclarationMerging() {
+            assertEquals("var a=()=>1,b=2;", JsMinifier.minify("var a=()=>{return 1};var b=2;"));
+        }
+
+        @Test
+        void interactionWithBracketToDot() {
+            assertEquals("()=>obj.x", JsMinifier.minify("() => { return obj[\"x\"]; }"));
+        }
+
+        @Test
+        void interactionWithLiteralShortening() {
+            assertEquals("()=>!0", JsMinifier.minify("() => { return true; }"));
+        }
+
+        @Test
+        void arrowInsideFunction() {
+            assertEquals("function f(){return()=>1}", JsMinifier.minify("function f(){ return () => { return 1; }; }"));
+        }
+
+        // ── Idempotency ────────────────────────────────────────────────
+
+        @Test
+        void alreadyConcise() {
+            assertEquals("()=>1", JsMinifier.minify("()=>1"));
+        }
+
+        @Test
+        void doubleMinifyStable() {
+            String first = JsMinifier.minify("() => { return 1; }");
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyObject() {
+            String first = JsMinifier.minify("() => { return {x: 1}; }");
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyNested() {
+            String first = JsMinifier.minify("() => { return () => { return 1; }; }");
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyComma() {
+            String first = JsMinifier.minify("() => { return a, b; }");
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyComplex() {
+            String input = "var a=()=>{return 1};var b=()=>{return{x:1}};var c=()=>{return a,b};";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+    }
+
+    // ── Arrow Body Shortening — Edge Cases ────────────────────────────
+
+    @Nested
+    class ArrowBodyShorteningEdgeCases {
+
+        // ── Identifier confusion: "return" as prefix ────────────────────
+
+        @Test
+        void returnValueIdentifier() {
+            // "returnValue" is an identifier, not "return Value"
+            assertEquals("()=>{returnValue}", JsMinifier.minify("() => { returnValue; }"));
+        }
+
+        @Test
+        void returnTypeIdentifier() {
+            assertEquals("()=>{returnType()}", JsMinifier.minify("() => { returnType(); }"));
+        }
+
+        @Test
+        void returnedIdentifier() {
+            assertEquals("()=>{returned=!0}", JsMinifier.minify("() => { returned = true; }"));
+        }
+
+        @Test
+        void returnNewlineAsMultipleStatements() {
+            // Two statements: returnValue; and return 1
+            assertEquals("()=>{returnValue;return 1}", JsMinifier.minify("() => { returnValue; return 1; }"));
+        }
+
+        // ── Unary operators immediately after return (no space) ─────────
+
+        @Test
+        void returnNegation() {
+            // false → !1 by literal shortening, so !false → !!1
+            assertEquals("()=>!!1", JsMinifier.minify("() => { return !false; }"));
+        }
+
+        @Test
+        void returnBitwiseNot() {
+            assertEquals("()=>~x", JsMinifier.minify("() => { return ~x; }"));
+        }
+
+        @Test
+        void returnUnaryMinus() {
+            assertEquals("()=>-x", JsMinifier.minify("() => { return -x; }"));
+        }
+
+        @Test
+        void returnUnaryPlus() {
+            assertEquals("()=>+x", JsMinifier.minify("() => { return +x; }"));
+        }
+
+        @Test
+        void returnParenthesizedExpr() {
+            assertEquals("()=>(a+b)", JsMinifier.minify("() => { return (a + b); }"));
+        }
+
+        @Test
+        void returnArrayLiteralNoSpace() {
+            assertEquals("()=>[1]", JsMinifier.minify("() => { return [1]; }"));
+        }
+
+        @Test
+        void returnStringNoSpace() {
+            // After minification: =>{return"str"}
+            assertEquals("()=>\"str\"", JsMinifier.minify("() => { return \"str\"; }"));
+        }
+
+        @Test
+        void returnTemplateLiteralNoSpace() {
+            assertEquals("()=>`str`", JsMinifier.minify("() => { return `str`; }"));
+        }
+
+        @Test
+        void returnTypeofExpression() {
+            assertEquals("()=>typeof x", JsMinifier.minify("() => { return typeof x; }"));
+        }
+
+        @Test
+        void returnVoidExpression() {
+            // "return void doStuff()" is a value return, not stripped
+            assertEquals("()=>void doStuff()", JsMinifier.minify("() => { return void doStuff(); }"));
+        }
+
+        @Test
+        void returnDeleteExpression() {
+            assertEquals("()=>delete obj.x", JsMinifier.minify("() => { return delete obj.x; }"));
+        }
+
+        // ── Strings/templates/regex containing arrow/return patterns ────
+
+        @Test
+        void stringContainingArrowReturn() {
+            assertEquals("var s=\"()=>{return 1}\";", JsMinifier.minify("var s = \"()=>{return 1}\";"));
+        }
+
+        @Test
+        void templateContainingArrowReturn() {
+            assertEquals("var s=`()=>{return 1}`;", JsMinifier.minify("var s = `()=>{return 1}`;"));
+        }
+
+        @Test
+        void regexContainingEquals() {
+            // Regex /=>/ should not trigger arrow detection
+            assertEquals("var r=/=>/;", JsMinifier.minify("var r = /=>/;"));
+        }
+
+        @Test
+        void stringWithClosingBraceInReturn() {
+            // Return a string that contains "}" — must not confuse brace matching
+            assertEquals("()=>\"}\"", JsMinifier.minify("() => { return \"}\"; }"));
+        }
+
+        @Test
+        void stringWithSemicolonInReturn() {
+            // Return a string that contains ";" — must not treat as multiple statements
+            assertEquals("()=>\"a;b;c\"", JsMinifier.minify("() => { return \"a;b;c\"; }"));
+        }
+
+        @Test
+        void templateWithBracesInReturn() {
+            assertEquals("()=>`{}`", JsMinifier.minify("() => { return `{}`; }"));
+        }
+
+        @Test
+        void templateExpressionWithBracesInReturn() {
+            assertEquals("()=>`${obj.x}`", JsMinifier.minify("() => { return `${obj.x}`; }"));
+        }
+
+        @Test
+        void regexWithBraceInReturn() {
+            assertEquals("()=>/[{}]/", JsMinifier.minify("() => { return /[{}]/; }"));
+        }
+
+        @Test
+        void returnStringWithReturnKeyword() {
+            assertEquals("()=>\"return\"", JsMinifier.minify("() => { return \"return\"; }"));
+        }
+
+        // ── Complex expressions in return ───────────────────────────────
+
+        @Test
+        void returnObjectWithMethod() {
+            assertEquals("()=>({m:function(){return 1}})", JsMinifier.minify("() => { return {m: function(){ return 1; }}; }"));
+        }
+
+        @Test
+        void returnObjectWithArrowMethod() {
+            assertEquals("()=>({m:()=>1})", JsMinifier.minify("() => { return {m: () => { return 1; }}; }"));
+        }
+
+        @Test
+        void returnDeeplyNestedObject() {
+            assertEquals("()=>({a:{b:{c:{d:1}}}})", JsMinifier.minify("() => { return {a:{b:{c:{d:1}}}}; }"));
+        }
+
+        @Test
+        void returnFunctionExpression() {
+            assertEquals("()=>function(){return 1}", JsMinifier.minify("() => { return function(){ return 1; }; }"));
+        }
+
+        @Test
+        void returnClassExpression() {
+            assertEquals("()=>class{}", JsMinifier.minify("() => { return class{}; }"));
+        }
+
+        @Test
+        void returnConditionalChain() {
+            assertEquals("(x)=>x>0?x:x<0?-x:0", JsMinifier.minify("(x) => { return x > 0 ? x : x < 0 ? -x : 0; }"));
+        }
+
+        @Test
+        void returnLogicalChain() {
+            assertEquals("()=>a&&b||c", JsMinifier.minify("() => { return a && b || c; }"));
+        }
+
+        @Test
+        void returnNullishCoalescing() {
+            assertEquals("()=>a??b", JsMinifier.minify("() => { return a ?? b; }"));
+        }
+
+        @Test
+        void returnOptionalChaining() {
+            assertEquals("()=>a?.b?.c", JsMinifier.minify("() => { return a?.b?.c; }"));
+        }
+
+        @Test
+        void returnSpreadInArray() {
+            assertEquals("()=>[...a,...b]", JsMinifier.minify("() => { return [...a, ...b]; }"));
+        }
+
+        @Test
+        void returnSpreadInObject() {
+            assertEquals("()=>({...a,...b})", JsMinifier.minify("() => { return {...a, ...b}; }"));
+        }
+
+        @Test
+        void returnAssignment() {
+            assertEquals("()=>x=1", JsMinifier.minify("() => { return x = 1; }"));
+        }
+
+        @Test
+        void returnCompoundAssignment() {
+            assertEquals("()=>x+=1", JsMinifier.minify("() => { return x += 1; }"));
+        }
+
+        // ── Multiple arrows in sequence ─────────────────────────────────
+
+        @Test
+        void twoArrowsInArray() {
+            assertEquals("[()=>1,()=>2]", JsMinifier.minify("[() => { return 1; }, () => { return 2; }]"));
+        }
+
+        @Test
+        void twoArrowsAsArguments() {
+            assertEquals("f(()=>1,()=>2)", JsMinifier.minify("f(() => { return 1; }, () => { return 2; })"));
+        }
+
+        @Test
+        void arrowInTernary() {
+            assertEquals("x?()=>1:()=>2", JsMinifier.minify("x ? () => { return 1; } : () => { return 2; }"));
+        }
+
+        @Test
+        void arrowAsObjectValue() {
+            assertEquals("{m:()=>1}", JsMinifier.minify("{ m: () => { return 1; } }"));
+        }
+
+        @Test
+        void multipleArrowDeclarations() {
+            assertEquals("var a=()=>1,b=()=>2,c=()=>3;",
+                    JsMinifier.minify("var a = () => { return 1; }; var b = () => { return 2; }; var c = () => { return 3; };"));
+        }
+
+        @Test
+        void arrowReturningArrowThatReturnsObject() {
+            assertEquals("()=>()=>({x:()=>1})",
+                    JsMinifier.minify("() => { return () => { return {x: () => { return 1; }}; }; }"));
+        }
+
+        // ── Arrow with special parameter forms ──────────────────────────
+
+        @Test
+        void destructuringParams() {
+            assertEquals("({x})=>x", JsMinifier.minify("({x}) => { return x; }"));
+        }
+
+        @Test
+        void arrayDestructuringParams() {
+            assertEquals("([a,b])=>a+b", JsMinifier.minify("([a, b]) => { return a + b; }"));
+        }
+
+        @Test
+        void restParams() {
+            assertEquals("(...args)=>args", JsMinifier.minify("(...args) => { return args; }"));
+        }
+
+        @Test
+        void defaultParams() {
+            assertEquals("(x=1)=>x", JsMinifier.minify("(x = 1) => { return x; }"));
+        }
+
+        @Test
+        void defaultParamWithArrow() {
+            // Default param itself contains arrow — the inner arrow is in parens, not the body
+            assertEquals("(f=()=>1)=>f()", JsMinifier.minify("(f = () => { return 1; }) => { return f(); }"));
+        }
+
+        // ── Must NOT shorten: multiple statements ───────────────────────
+
+        @Test
+        void ifThenReturn() {
+            assertEquals("(x)=>{if(x)return 1;return 2}", JsMinifier.minify("(x) => { if (x) return 1; return 2; }"));
+        }
+
+        @Test
+        void forLoopThenReturn() {
+            assertEquals("(a)=>{for(var i=0;i<a.length;i++)f(a[i]);return a}",
+                    JsMinifier.minify("(a) => { for(var i = 0; i < a.length; i++) f(a[i]); return a; }"));
+        }
+
+        @Test
+        void letThenReturn() {
+            assertEquals("()=>{let x=1;return x}", JsMinifier.minify("() => { let x = 1; return x; }"));
+        }
+
+        @Test
+        void tryCatchBody() {
+            assertEquals("()=>{try{f()}catch(e){g()}}", JsMinifier.minify("() => { try { f(); } catch(e) { g(); } }"));
+        }
+
+        @Test
+        void switchBody() {
+            assertEquals("(x)=>{switch(x){case 1:return\"a\";default:return\"b\"}}",
+                    JsMinifier.minify("(x) => { switch(x) { case 1: return \"a\"; default: return \"b\"; } }"));
+        }
+
+        @Test
+        void whileLoopBody() {
+            assertEquals("()=>{while(cond())doStuff()}", JsMinifier.minify("() => { while(cond()) doStuff(); }"));
+        }
+
+        @Test
+        void throwStatement() {
+            assertEquals("()=>{throw new Error}", JsMinifier.minify("() => { throw new Error; }"));
+        }
+
+        @Test
+        void assignmentThenReturn() {
+            assertEquals("()=>{x=1;return x}", JsMinifier.minify("() => { x = 1; return x; }"));
+        }
+
+        // ── Comma edge cases ────────────────────────────────────────────
+
+        @Test
+        void commaInNestedObjectNotWrapped() {
+            // The comma is inside {}, not at top level of the expression
+            assertEquals("()=>({a:1,b:2})", JsMinifier.minify("() => { return {a: 1, b: 2}; }"));
+        }
+
+        @Test
+        void commaInNestedCallNotWrapped() {
+            assertEquals("()=>f(a,b,c)", JsMinifier.minify("() => { return f(a, b, c); }"));
+        }
+
+        @Test
+        void commaInNestedArrayNotWrapped() {
+            assertEquals("()=>[[1,2],[3,4]]", JsMinifier.minify("() => { return [[1,2],[3,4]]; }"));
+        }
+
+        @Test
+        void commaInTemplateLiteralNotWrapped() {
+            assertEquals("()=>`${a},${b}`", JsMinifier.minify("() => { return `${a},${b}`; }"));
+        }
+
+        @Test
+        void topLevelCommaWithNestedCommas() {
+            // Top-level comma between f(a,b) and g(c,d) — needs parens
+            assertEquals("()=>(f(a,b),g(c,d))", JsMinifier.minify("() => { return f(a,b), g(c,d); }"));
+        }
+
+        // ── Object literal edge cases ───────────────────────────────────
+
+        @Test
+        void objectWithComputedProperty() {
+            assertEquals("()=>({[key]:val})", JsMinifier.minify("() => { return {[key]: val}; }"));
+        }
+
+        @Test
+        void objectWithShorthandMethod() {
+            assertEquals("()=>({m(){}})", JsMinifier.minify("() => { return {m(){}}; }"));
+        }
+
+        @Test
+        void objectWithGetter() {
+            assertEquals("()=>({get x(){return 1}})", JsMinifier.minify("() => { return {get x(){ return 1; }}; }"));
+        }
+
+        @Test
+        void objectWithSpreadAndProps() {
+            assertEquals("()=>({...defaults,x:1})", JsMinifier.minify("() => { return {...defaults, x: 1}; }"));
+        }
+
+        // ── Nested arrow edge cases ─────────────────────────────────────
+
+        @Test
+        void nestedArrowWithMultipleStatements() {
+            // Inner arrow has multiple statements — should NOT shorten inner
+            assertEquals("()=>()=>{x();return 1}",
+                    JsMinifier.minify("() => { return () => { x(); return 1; }; }"));
+        }
+
+        @Test
+        void outerMultipleStatementsInnerShortenable() {
+            // Outer has multiple statements — should NOT shorten outer; inner SHOULD shorten
+            assertEquals("()=>{x();return()=>1}",
+                    JsMinifier.minify("() => { x(); return () => { return 1; }; }"));
+        }
+
+        @Test
+        void nestedArrowReturningComma() {
+            assertEquals("()=>()=>(a,b)",
+                    JsMinifier.minify("() => { return () => { return a, b; }; }"));
+        }
+
+        @Test
+        void quadrupleNestedArrow() {
+            assertEquals("()=>()=>()=>()=>42",
+                    JsMinifier.minify("() => { return () => { return () => { return () => { return 42; }; }; }; }"));
+        }
+
+        @Test
+        void curryingPattern() {
+            assertEquals("a=>b=>c=>a+b+c",
+                    JsMinifier.minify("a => { return b => { return c => { return a + b + c; }; }; }"));
+        }
+
+        @Test
+        void nestedArrowInArrayReturn() {
+            // Return an array containing an arrow — arrow inside array is concise, comma in array is not top-level
+            assertEquals("()=>[()=>1,()=>2]",
+                    JsMinifier.minify("() => { return [() => { return 1; }, () => { return 2; }]; }"));
+        }
+
+        @Test
+        void nestedArrowAsCallArgument() {
+            assertEquals("()=>f(()=>1)",
+                    JsMinifier.minify("() => { return f(() => { return 1; }); }"));
+        }
+
+        // ── Async/generator edge cases ──────────────────────────────────
+
+        @Test
+        void asyncArrowReturningAwait() {
+            assertEquals("async()=>await fetch(\"/api\")",
+                    JsMinifier.minify("async () => { return await fetch(\"/api\"); }"));
+        }
+
+        @Test
+        void asyncArrowReturningPromise() {
+            assertEquals("async()=>new Promise(r=>r(1))",
+                    JsMinifier.minify("async () => { return new Promise(r => { return r(1); }); }"));
+        }
+
+        @Test
+        void asyncArrowMultipleStatements() {
+            assertEquals("async()=>{const x=await f();return x}",
+                    JsMinifier.minify("async () => { const x = await f(); return x; }"));
+        }
+
+        // ── Interaction with other minifier passes ──────────────────────
+
+        @Test
+        void literalShorteningThenArrowShortening() {
+            assertEquals("()=>!1", JsMinifier.minify("() => { return false; }"));
+        }
+
+        @Test
+        void infinityShorteningInArrow() {
+            assertEquals("()=>(1/0)", JsMinifier.minify("() => { return Infinity; }"));
+        }
+
+        @Test
+        void bracketToDotInsideArrow() {
+            assertEquals("()=>obj.x+obj.y",
+                    JsMinifier.minify("() => { return obj[\"x\"] + obj[\"y\"]; }"));
+        }
+
+        @Test
+        void declarationMergingWithMultipleArrows() {
+            assertEquals("var f=()=>1,g=()=>({x:1}),h=()=>(a,b);",
+                    JsMinifier.minify("var f = () => { return 1; }; var g = () => { return {x: 1}; }; var h = () => { return a, b; };"));
+        }
+
+        @Test
+        void arrowInsideFunctionWithRedundantReturn() {
+            // Outer function's redundant return is removed, inner arrow shortened
+            assertEquals("function f(){var g=()=>1}",
+                    JsMinifier.minify("function f(){ var g = () => { return 1; }; return; }"));
+        }
+
+        @Test
+        void semicolonStrippingBeforeBraceInteraction() {
+            // Main pass strips ; before }, then arrow body shortening runs
+            assertEquals("const f=()=>1;", JsMinifier.minify("const f = () => { return 1; };"));
+        }
+
+        // ── Strings inside return expression with tricky content ────────
+
+        @Test
+        void returnStringWithSemicolonAndBrace() {
+            assertEquals("()=>\";};\"", JsMinifier.minify("() => { return \";};\" ; }"));
+        }
+
+        @Test
+        void returnStringWithReturnAndBrace() {
+            assertEquals("()=>\"return}\"", JsMinifier.minify("() => { return \"return}\"; }"));
+        }
+
+        @Test
+        void returnSingleQuoteStringWithBraces() {
+            assertEquals("()=>'{}'", JsMinifier.minify("() => { return '{}'; }"));
+        }
+
+        @Test
+        void returnTemplateLiteralWithReturnBrace() {
+            assertEquals("()=>`return}`", JsMinifier.minify("() => { return `return}`; }"));
+        }
+
+        @Test
+        void returnRegexWithBracePattern() {
+            assertEquals("()=>/\\}/", JsMinifier.minify("() => { return /\\}/; }"));
+        }
+
+        @Test
+        void returnStringConcatenation() {
+            assertEquals("()=>\"{\"+'}'", JsMinifier.minify("() => { return \"{\" + '}'; }"));
+        }
+
+        // ── Edge cases around => detection ──────────────────────────────
+
+        @Test
+        void tripleEqualsNotConfused() {
+            // a===b should not be confused with arrow
+            assertEquals("a===b", JsMinifier.minify("a === b"));
+        }
+
+        @Test
+        void doubleEqualsGreaterThan() {
+            // a==>b should not exist in valid JS, but >= is fine
+            assertEquals("a>=b", JsMinifier.minify("a >= b"));
+        }
+
+        @Test
+        void assignmentToArrow() {
+            // a = () => {return 1} — the = and > are separate tokens
+            assertEquals("a=()=>1", JsMinifier.minify("a = () => { return 1; }"));
+        }
+
+        @Test
+        void compoundAssignmentBeforeArrow() {
+            assertEquals("a+=()=>1", JsMinifier.minify("a += () => { return 1; }"));
+        }
+
+        // ── Body that looks like return but isn't ───────────────────────
+
+        @Test
+        void arrowWithReturnInNestedFunction() {
+            // The return is inside a nested function, not the arrow's single statement
+            assertEquals("()=>{function inner(){return 1}}", JsMinifier.minify("() => { function inner(){ return 1; } }"));
+        }
+
+        @Test
+        void arrowWithReturnInNestedArrow() {
+            // The body has two statements: inner arrow declaration + return
+            assertEquals("()=>{const inner=()=>1;return inner}",
+                    JsMinifier.minify("() => { const inner = () => { return 1; }; return inner; }"));
+        }
+
+        // ── Trailing content after arrow ────────────────────────────────
+
+        @Test
+        void arrowFollowedBySemicolon() {
+            assertEquals("var f=()=>1;", JsMinifier.minify("var f = () => { return 1; };"));
+        }
+
+        @Test
+        void arrowFollowedByComma() {
+            assertEquals("[()=>1,2]", JsMinifier.minify("[() => { return 1; }, 2]"));
+        }
+
+        @Test
+        void arrowFollowedByCloseParen() {
+            assertEquals("f(()=>1)", JsMinifier.minify("f(() => { return 1; })"));
+        }
+
+        @Test
+        void arrowFollowedByCloseBracket() {
+            assertEquals("[()=>1]", JsMinifier.minify("[() => { return 1; }]"));
+        }
+
+        @Test
+        void arrowCallChaining() {
+            // ()=>{return f()}() — can't shorten without breaking call semantics...
+            // Actually after shortening: ()=>f()() which is ()=>(f()()) — no, ()=>f() followed by ()
+            // Wait, the input is a self-executing arrow: (() => { return f(); })()
+            // That stays as (()=>f())()
+            assertEquals("(()=>f())()", JsMinifier.minify("(() => { return f(); })()"));
+        }
+
+        @Test
+        void arrowPropertyAccess() {
+            assertEquals("(()=>({x:1})).x", JsMinifier.minify("(() => { return {x:1}; }).x"));
+        }
+
+        // ── Already minified/concise inputs — must not break ────────────
+
+        @Test
+        void alreadyConciseWithObject() {
+            assertEquals("()=>({x:1})", JsMinifier.minify("()=>({x:1})"));
+        }
+
+        @Test
+        void alreadyConciseWithComma() {
+            assertEquals("()=>(a,b)", JsMinifier.minify("()=>(a,b)"));
+        }
+
+        @Test
+        void alreadyConciseNested() {
+            assertEquals("()=>()=>1", JsMinifier.minify("()=>()=>1"));
+        }
+
+        @Test
+        void alreadyConciseWithExpression() {
+            assertEquals("x=>x*2", JsMinifier.minify("x=>x*2"));
+        }
+
+        @Test
+        void arrowWithBlockBodyNotReturn() {
+            // Concise body that isn't a return — stays
+            assertEquals("()=>{doStuff()}", JsMinifier.minify("()=>{doStuff()}"));
+        }
+
+        // ── Large/complex real-world patterns ───────────────────────────
+
+        @Test
+        void reactComponent() {
+            assertEquals("(props)=>({...props,className:\"active\"})",
+                    JsMinifier.minify("(props) => { return {...props, className: \"active\"}; }"));
+        }
+
+        @Test
+        void promiseChain() {
+            assertEquals("()=>fetch(\"/api\").then(r=>r.json()).then(d=>d.result)",
+                    JsMinifier.minify("() => { return fetch(\"/api\").then(r => { return r.json(); }).then(d => { return d.result; }); }"));
+        }
+
+        @Test
+        void mapChain() {
+            assertEquals("[1,2,3].map(x=>x*2).filter(x=>x>2)",
+                    JsMinifier.minify("[1,2,3].map(x => { return x * 2; }).filter(x => { return x > 2; })"));
+        }
+
+        @Test
+        void reducerPattern() {
+            assertEquals("(state,action)=>({...state,count:state.count+1})",
+                    JsMinifier.minify("(state, action) => { return {...state, count: state.count + 1}; }"));
+        }
+
+        @Test
+        void comparatorFunction() {
+            assertEquals("(a,b)=>a.name.localeCompare(b.name)",
+                    JsMinifier.minify("(a, b) => { return a.name.localeCompare(b.name); }"));
+        }
+
+        @Test
+        void eventHandler() {
+            assertEquals("e=>e.preventDefault()",
+                    JsMinifier.minify("e => { return e.preventDefault(); }"));
+        }
+
+        // ── Comprehensive idempotency ───────────────────────────────────
+
+        @Test
+        void doubleMinifyNestedObjectArrow() {
+            String first = JsMinifier.minify("() => { return {m: () => { return 1; }}; }");
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyMultipleArrows() {
+            String input = "[() => { return 1; }, () => { return {x:1}; }, () => { return a, b; }]";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyCurrying() {
+            String input = "a => { return b => { return c => { return a + b + c; }; }; }";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyPromiseChain() {
+            String input = "() => { return fetch(\"/api\").then(r => { return r.json(); }); }";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyDeclarationMergingWithArrows() {
+            String input = "var f = () => { return 1; }; var g = () => { return {x: 1}; }; var h = () => { return a, b; };";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyAllInteractions() {
+            String input = "var f = () => { return true; }; var g = () => { return obj[\"prop\"]; }; var h = () => { return 1000; };";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyArrowInsideFunction() {
+            String input = "function f(){ return () => { return () => { return {x:1}; }; }; }";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyAsyncArrow() {
+            String input = "async () => { return await fetch(\"/api\"); }";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyRegexInArrow() {
+            String input = "() => { return /pattern/gi; }";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyStringWithBracesInArrow() {
+            String input = "() => { return \"{;}\"; }";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
         }
     }
 
