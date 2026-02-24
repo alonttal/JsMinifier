@@ -83,7 +83,7 @@ public final class MinifierEngine {
                 case REGEX_LITERAL -> processRegex();
             }
         }
-        return convertBracketToDot(mergeConsecutiveDeclarations(out.toString()));
+        return removeRedundantReturn(convertBracketToDot(mergeConsecutiveDeclarations(out.toString())));
     }
 
     // ── CODE state ──────────────────────────────────────────────────────
@@ -1074,6 +1074,208 @@ public final class MinifierEngine {
             if (!isIdentPart(name.charAt(i))) return false;
         }
         return true;
+    }
+
+    // ── Remove redundant return at end of function body (post-pass) ────
+
+    static String removeRedundantReturn(String input) {
+        int len = input.length();
+        if (len == 0) return input;
+
+        StringBuilder result = new StringBuilder(len);
+
+        // Stack tracking which '{' opened a function body.
+        // Each entry is the brace depth at the point that '{' was encountered.
+        // We use a simple boolean stack: true = function body, false = other block.
+        Deque<Boolean> braceStack = new ArrayDeque<>();
+
+        // State: when we see 'function' keyword or '=>', we set a flag so the
+        // next '{' is marked as a function body.
+        boolean nextBraceIsFunctionBody = false;
+        // For 'function' keyword, we need to skip past optional *, name, and params
+        // before the next '{'. This tracks whether we're in that "skipping" state.
+        boolean awaitingFunctionBrace = false;
+        int funcParenDepth = 0; // tracks parens when skipping function params
+
+        int i = 0;
+        while (i < len) {
+            char c = input.charAt(i);
+
+            // Skip string literals
+            if (c == '\'' || c == '"') {
+                int end = skipStringLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Skip template literals
+            if (c == '`') {
+                int end = skipTemplateLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Skip regex literals
+            if (c == '/' && i + 1 < len && isRegexStartInPostPass(input, result)) {
+                int end = skipRegexLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Detect 'function' keyword
+            if (c == 'f' && i + 8 <= len && input.startsWith("function", i)) {
+                // Verify it's a keyword boundary (not part of a larger identifier)
+                boolean prevOk = (i == 0 || !isIdentPart(input.charAt(i - 1)));
+                boolean nextOk = (i + 8 >= len || !isIdentPart(input.charAt(i + 8)));
+                if (prevOk && nextOk) {
+                    // Emit 'function'
+                    result.append("function");
+                    i += 8;
+                    awaitingFunctionBrace = true;
+                    funcParenDepth = 0;
+                    continue;
+                }
+            }
+
+            // Detect '=>' for arrow functions
+            if (c == '=' && i + 1 < len && input.charAt(i + 1) == '>') {
+                result.append("=>");
+                i += 2;
+                // If next char is '{', mark it as function body
+                if (i < len && input.charAt(i) == '{') {
+                    nextBraceIsFunctionBody = true;
+                }
+                continue;
+            }
+
+            // When awaiting a function body brace, track parens for parameter list
+            if (awaitingFunctionBrace) {
+                if (c == '(') {
+                    funcParenDepth++;
+                    result.append(c);
+                    i++;
+                    continue;
+                } else if (c == ')') {
+                    funcParenDepth--;
+                    result.append(c);
+                    i++;
+                    // After closing parens at depth 0, skip strings inside default params
+                    continue;
+                } else if (c == '{' && funcParenDepth == 0) {
+                    // This is the function body opening brace
+                    awaitingFunctionBrace = false;
+                    nextBraceIsFunctionBody = true;
+                    // Fall through to brace handling below
+                } else {
+                    // Skip over *, name, whitespace between 'function' and '('
+                    // Also skip string literals inside default parameter values
+                    result.append(c);
+                    i++;
+                    continue;
+                }
+            }
+
+            // Track braces
+            if (c == '{') {
+                braceStack.push(nextBraceIsFunctionBody);
+                nextBraceIsFunctionBody = false;
+                result.append(c);
+                i++;
+                continue;
+            }
+
+            if (c == '}') {
+                if (!braceStack.isEmpty()) {
+                    boolean isFunctionBody = braceStack.pop();
+                    if (isFunctionBody) {
+                        tryRemoveTrailingReturn(result);
+                    }
+                }
+                result.append(c);
+                i++;
+                continue;
+            }
+
+            result.append(c);
+            i++;
+        }
+
+        return result.toString();
+    }
+
+    /**
+     * If the result buffer ends with a redundant return pattern, remove it.
+     * Patterns checked (longest first):
+     *   - "return void 0" (13 chars)
+     *   - "return\n"      (7 chars, bare return with ASI newline)
+     *   - "return"         (6 chars, bare return)
+     * Each requires the preceding char is a statement boundary ({, ;, }, \n)
+     * or start of buffer — this prevents removing `return` when it's the
+     * body of a braceless if/else/for/while (e.g. `if(x)return}`).
+     * After removal, also strips a trailing ';'.
+     */
+    private static void tryRemoveTrailingReturn(StringBuilder sb) {
+        int len = sb.length();
+
+        // Try "return void 0" (13 chars)
+        if (len >= 13) {
+            String tail = sb.substring(len - 13);
+            if (tail.equals("return void 0")) {
+                int before = len - 13;
+                if (isStatementBoundary(sb, before)) {
+                    sb.setLength(before);
+                    stripTrailingSemicolon(sb);
+                    return;
+                }
+            }
+        }
+
+        // Try "return\n" (7 chars — bare return followed by newline for ASI)
+        if (len >= 7) {
+            String tail = sb.substring(len - 7);
+            if (tail.equals("return\n")) {
+                int before = len - 7;
+                if (isStatementBoundary(sb, before)) {
+                    sb.setLength(before);
+                    stripTrailingSemicolon(sb);
+                    return;
+                }
+            }
+        }
+
+        // Try "return" (6 chars)
+        if (len >= 6) {
+            String tail = sb.substring(len - 6);
+            if (tail.equals("return")) {
+                int before = len - 6;
+                if (isStatementBoundary(sb, before)) {
+                    sb.setLength(before);
+                    stripTrailingSemicolon(sb);
+                    return;
+                }
+            }
+        }
+    }
+
+    /**
+     * Check that position {@code pos} in the buffer is a statement boundary:
+     * either start of buffer, or preceded by {, ;, }, or \n.
+     * This ensures "return" is a standalone statement, not the body of a
+     * braceless control structure like if(x)return.
+     */
+    private static boolean isStatementBoundary(StringBuilder sb, int pos) {
+        if (pos == 0) return true;
+        char c = sb.charAt(pos - 1);
+        return c == '{' || c == ';' || c == '}' || c == '\n';
+    }
+
+    private static void stripTrailingSemicolon(StringBuilder sb) {
+        if (!sb.isEmpty() && sb.charAt(sb.length() - 1) == ';') {
+            sb.setLength(sb.length() - 1);
+        }
     }
 
     private static String matchDeclKeyword(String input, int pos, int len) {

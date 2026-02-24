@@ -4070,6 +4070,422 @@ class JsMinifierTest {
         }
     }
 
+    // ── Redundant Return Removal ─────────────────────────────────────────
+
+    @Nested
+    class RedundantReturnRemoval {
+
+        // Basic removal
+        @Test
+        void bareReturnWithSemicolon() {
+            assertEquals("function f(){}", JsMinifier.minify("function f(){ return; }"));
+        }
+
+        @Test
+        void returnUndefined() {
+            assertEquals("function f(){}", JsMinifier.minify("function f(){ return undefined; }"));
+        }
+
+        @Test
+        void returnVoid0() {
+            assertEquals("function f(){}", JsMinifier.minify("function f(){ return void 0; }"));
+        }
+
+        // With preceding statement
+        @Test
+        void precedingStatementBareReturn() {
+            assertEquals("function f(){doStuff()}", JsMinifier.minify("function f(){ doStuff(); return; }"));
+        }
+
+        @Test
+        void precedingStatementReturnUndefined() {
+            assertEquals("function f(){doStuff()}", JsMinifier.minify("function f(){ doStuff(); return undefined; }"));
+        }
+
+        // Function expressions and arrows
+        @Test
+        void functionExpression() {
+            assertEquals("var f=function(){}", JsMinifier.minify("var f = function(){ return; }"));
+        }
+
+        @Test
+        void arrowFunctionBareReturn() {
+            assertEquals("var f=()=>{}", JsMinifier.minify("var f = () => { return; }"));
+        }
+
+        @Test
+        void arrowFunctionWithPrecedingStatement() {
+            assertEquals("var f=()=>{doStuff()}", JsMinifier.minify("var f = () => { doStuff(); return; }"));
+        }
+
+        @Test
+        void iifeWithReturn() {
+            assertEquals("(function(){})()", JsMinifier.minify("(function(){ return; })()"));
+        }
+
+        // Generator and async
+        @Test
+        void generatorFunction() {
+            assertEquals("function*gen(){yield 1}", JsMinifier.minify("function* gen(){ yield 1; return; }"));
+        }
+
+        @Test
+        void asyncFunction() {
+            assertEquals("async function f(){await x}", JsMinifier.minify("async function f(){ await x; return; }"));
+        }
+
+        // Must NOT remove — return with value
+        @Test
+        void returnWithNumberValue() {
+            assertEquals("function f(){return 1}", JsMinifier.minify("function f(){ return 1; }"));
+        }
+
+        @Test
+        void returnWithBooleanValue() {
+            assertEquals("function f(){return!0}", JsMinifier.minify("function f(){ return true; }"));
+        }
+
+        @Test
+        void returnWithObjectValue() {
+            assertEquals("function f(){return{x:1}}", JsMinifier.minify("function f(){ return {x:1}; }"));
+        }
+
+        @Test
+        void returnWithStringValue() {
+            assertEquals("function f(){return\"hello\"}", JsMinifier.minify("function f(){ return \"hello\"; }"));
+        }
+
+        // Must NOT remove — return in inner block (not end of function)
+        @Test
+        void returnInIfBlock() {
+            assertEquals("function f(x){if(x){return}doStuff()}", JsMinifier.minify("function f(x){ if(x){ return; } doStuff(); }"));
+        }
+
+        @Test
+        void returnInForBlock() {
+            assertEquals("function f(x){for(;;){return}y()}", JsMinifier.minify("function f(x){ for(;;){ return; } y(); }"));
+        }
+
+        // Nested functions
+        @Test
+        void nestedBothRedundant() {
+            assertEquals("function a(){function b(){}}", JsMinifier.minify("function a(){ function b(){ return; } return; }"));
+        }
+
+        @Test
+        void nestedInnerRedundantOuterValue() {
+            assertEquals("function a(){function b(){}return b()}", JsMinifier.minify("function a(){ function b(){ return; } return b(); }"));
+        }
+
+        // Edge cases
+        @Test
+        void myreturnIsNotKeyword() {
+            assertEquals("function f(){myreturn}", JsMinifier.minify("function f(){ myreturn; }"));
+        }
+
+        @Test
+        void returnInsideString() {
+            assertEquals("function f(){console.log(\"return\")}", JsMinifier.minify("function f(){ console.log(\"return\"); }"));
+        }
+
+        @Test
+        void emptyFunctionStays() {
+            assertEquals("function f(){}", JsMinifier.minify("function f(){}"));
+        }
+
+        @Test
+        void functionWithOnlyReturn() {
+            assertEquals("function f(){}", JsMinifier.minify("function f(){ return; }"));
+        }
+
+        // Not converted — method shorthand (v1 limitation)
+        @Test
+        void methodShorthandNotConverted() {
+            assertEquals("var obj={m(){return}}", JsMinifier.minify("var obj = { m(){ return; } }"));
+        }
+
+        @Test
+        void classMethodNotConverted() {
+            assertEquals("class A{m(){return}}", JsMinifier.minify("class A{ m(){ return; } }"));
+        }
+
+        // Idempotency
+        @Test
+        void alreadyOptimal() {
+            assertEquals("function f(){}", JsMinifier.minify("function f(){}"));
+        }
+
+        @Test
+        void doubleMinifyStable() {
+            String first = JsMinifier.minify("function f(){ return; }");
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent");
+        }
+
+        // Interaction with other features
+        @Test
+        void interactionWithDeclarationMerging() {
+            assertEquals("var a=function(){},b=2;", JsMinifier.minify("var a = function(){ return; }; var b = 2;"));
+        }
+
+        @Test
+        void interactionWithBracketToDot() {
+            assertEquals("function f(){obj.x}", JsMinifier.minify("function f(){ obj[\"x\"]; return; }"));
+        }
+
+        @Test
+        void interactionWithLiteralShortening() {
+            assertEquals("function f(){}", JsMinifier.minify("function f(){ return undefined; }"));
+        }
+
+        // Named function expression
+        @Test
+        void namedFunctionExpression() {
+            assertEquals("var f=function named(){}", JsMinifier.minify("var f = function named(){ return; }"));
+        }
+
+        // Arrow with parameters
+        @Test
+        void arrowWithParams() {
+            assertEquals("var f=(a,b)=>{}", JsMinifier.minify("var f = (a, b) => { return; }"));
+        }
+
+        // ── Braceless control structures — must NOT remove return ──
+
+        @Test
+        void bracelessIfReturnAtEnd() {
+            // return is the body of if, not a standalone statement
+            assertEquals("function f(x){if(x)return}", JsMinifier.minify("function f(x){ if(x) return; }"));
+        }
+
+        @Test
+        void bracelessElseReturnAtEnd() {
+            assertEquals("function f(x){if(x)return;else return}", JsMinifier.minify("function f(x){ if(x) return; else return; }"));
+        }
+
+        @Test
+        void bracelessWhileReturnAtEnd() {
+            assertEquals("function f(x){while(x)return}", JsMinifier.minify("function f(x){ while(x) return; }"));
+        }
+
+        @Test
+        void bracelessForReturnAtEnd() {
+            assertEquals("function f(){for(;;)return}", JsMinifier.minify("function f(){ for(;;) return; }"));
+        }
+
+        @Test
+        void bracelessIfReturnVoid0AtEnd() {
+            assertEquals("function f(x){if(x)return void 0}", JsMinifier.minify("function f(x){ if(x) return void 0; }"));
+        }
+
+        @Test
+        void bracelessIfReturnUndefinedAtEnd() {
+            // undefined → void 0 by literal shortening
+            assertEquals("function f(x){if(x)return void 0}", JsMinifier.minify("function f(x){ if(x) return undefined; }"));
+        }
+
+        @Test
+        void nestedBracelessIfReturn() {
+            // if(y)return is inside braced if(x){...} block, not function body
+            assertEquals("function f(x,y){if(x){if(y)return}}", JsMinifier.minify("function f(x,y){ if(x){ if(y) return; } }"));
+        }
+
+        // ── Conditional early return with code after — must keep ──
+
+        @Test
+        void earlyReturnWithCodeAfter() {
+            assertEquals("function f(x){if(x)return;doStuff()}", JsMinifier.minify("function f(x){ if(x) return; doStuff(); }"));
+        }
+
+        @Test
+        void earlyReturnInBracedIfWithCodeAfter() {
+            assertEquals("function f(x){if(x){return}doStuff()}", JsMinifier.minify("function f(x){ if(x){ return; } doStuff(); }"));
+        }
+
+        @Test
+        void multipleEarlyReturns() {
+            assertEquals("function f(x,y){if(x)return;if(y)return;doStuff()}", JsMinifier.minify("function f(x,y){ if(x) return; if(y) return; doStuff(); }"));
+        }
+
+        // ── Return after block constructs at function end — CAN remove ──
+
+        @Test
+        void returnAfterIfBlockAtEnd() {
+            assertEquals("function f(x){if(x){doStuff()}}", JsMinifier.minify("function f(x){ if(x){ doStuff(); } return; }"));
+        }
+
+        @Test
+        void returnAfterTryCatchAtEnd() {
+            assertEquals("function f(){try{doStuff()}catch(e){}}", JsMinifier.minify("function f(){ try{ doStuff(); }catch(e){} return; }"));
+        }
+
+        @Test
+        void returnAfterForLoopAtEnd() {
+            assertEquals("function f(a){for(var i=0;i<a.length;i++){doStuff(a[i])}}", JsMinifier.minify("function f(a){ for(var i=0; i<a.length; i++){ doStuff(a[i]); } return; }"));
+        }
+
+        @Test
+        void returnAfterWhileAtEnd() {
+            assertEquals("function f(){while(cond()){doStuff()}}", JsMinifier.minify("function f(){ while(cond()){ doStuff(); } return; }"));
+        }
+
+        @Test
+        void returnAfterSwitchAtEnd() {
+            assertEquals("function f(x){switch(x){case 1:doA();break;default:doB()}}", JsMinifier.minify("function f(x){ switch(x){ case 1: doA(); break; default: doB(); } return; }"));
+        }
+
+        // ── Return inside inner blocks — must NOT remove ──
+
+        @Test
+        void returnInSwitchCase() {
+            assertEquals("function f(x){switch(x){case 1:return;default:return}}", JsMinifier.minify("function f(x){ switch(x){ case 1: return; default: return; } }"));
+        }
+
+        @Test
+        void returnInTryCatch() {
+            assertEquals("function f(){try{doStuff()}catch(e){return}}", JsMinifier.minify("function f(){ try{ doStuff(); } catch(e){ return; } }"));
+        }
+
+        @Test
+        void returnInFinally() {
+            assertEquals("function f(){try{doStuff()}finally{return}}", JsMinifier.minify("function f(){ try{ doStuff(); } finally{ return; } }"));
+        }
+
+        @Test
+        void returnInDoWhile() {
+            assertEquals("function f(){do{return}while(!1)}", JsMinifier.minify("function f(){ do{ return; } while(false); }"));
+        }
+
+        @Test
+        void returnInForIn() {
+            assertEquals("function f(o){for(var k in o){return}}", JsMinifier.minify("function f(o){ for(var k in o){ return; } }"));
+        }
+
+        @Test
+        void returnInForOf() {
+            assertEquals("function f(a){for(var x of a){return}}", JsMinifier.minify("function f(a){ for(var x of a){ return; } }"));
+        }
+
+        // ── Deeply nested and mixed ──
+
+        @Test
+        void tripleNestedFunctions() {
+            assertEquals("function a(){function b(){function c(){}}}", JsMinifier.minify("function a(){ function b(){ function c(){ return; } return; } return; }"));
+        }
+
+        @Test
+        void arrowInsideRegularFunction() {
+            assertEquals("function f(){var g=()=>{}}", JsMinifier.minify("function f(){ var g = () => { return; }; return; }"));
+        }
+
+        @Test
+        void regularInsideArrow() {
+            assertEquals("var f=()=>{function g(){}}", JsMinifier.minify("var f = () => { function g(){ return; } return; }"));
+        }
+
+        @Test
+        void innerFunctionWithValueReturnOuterRedundant() {
+            assertEquals("function a(){function b(){return 1}}", JsMinifier.minify("function a(){ function b(){ return 1; } return; }"));
+        }
+
+        // ── String/regex/template containing return-like patterns ──
+
+        @Test
+        void returnInTemplateLiteral() {
+            assertEquals("function f(){console.log(`return`)}", JsMinifier.minify("function f(){ console.log(`return`); }"));
+        }
+
+        @Test
+        void returnInRegex() {
+            assertEquals("function f(){/return/.test(x)}", JsMinifier.minify("function f(){ /return/.test(x); }"));
+        }
+
+        @Test
+        void returnInTemplateExpression() {
+            assertEquals("function f(){console.log(`${return_val}`)}", JsMinifier.minify("function f(){ console.log(`${return_val}`); }"));
+        }
+
+        // ── Default parameters with tricky content ──
+
+        @Test
+        void defaultParamWithReturnString() {
+            assertEquals("function f(x='return'){}", JsMinifier.minify("function f(x = 'return'){ return; }"));
+        }
+
+        @Test
+        void defaultParamWithBraces() {
+            assertEquals("function f(x={a:1}){}", JsMinifier.minify("function f(x = {a: 1}){ return; }"));
+        }
+
+        // ── return with values that must NOT be removed ──
+
+        @Test
+        void returnWithVoidExpression() {
+            assertEquals("function f(){return void doStuff()}", JsMinifier.minify("function f(){ return void doStuff(); }"));
+        }
+
+        @Test
+        void returnWithNegation() {
+            assertEquals("function f(){return!1}", JsMinifier.minify("function f(){ return false; }"));
+        }
+
+        @Test
+        void returnWithArray() {
+            assertEquals("function f(){return[1,2]}", JsMinifier.minify("function f(){ return [1, 2]; }"));
+        }
+
+        @Test
+        void returnWithFunctionCall() {
+            assertEquals("function f(){return doStuff()}", JsMinifier.minify("function f(){ return doStuff(); }"));
+        }
+
+        @Test
+        void returnWithTernary() {
+            assertEquals("function f(x){return x?1:2}", JsMinifier.minify("function f(x){ return x ? 1 : 2; }"));
+        }
+
+        @Test
+        void returnWithNull() {
+            assertEquals("function f(){return null}", JsMinifier.minify("function f(){ return null; }"));
+        }
+
+        @Test
+        void returnWithThis() {
+            assertEquals("function f(){return this}", JsMinifier.minify("function f(){ return this; }"));
+        }
+
+        // ── Ternary and comma at function end — CAN remove bare return after them ──
+
+        @Test
+        void ternaryThenBareReturn() {
+            assertEquals("function f(x){x?doA():doB()}", JsMinifier.minify("function f(x){ x ? doA() : doB(); return; }"));
+        }
+
+        @Test
+        void commaExprThenBareReturn() {
+            assertEquals("function f(){a(),b()}", JsMinifier.minify("function f(){ a(), b(); return; }"));
+        }
+
+        // ── Labeled statement edge case ──
+
+        @Test
+        void labeledBlockThenReturn() {
+            assertEquals("function f(){label:{break label}}", JsMinifier.minify("function f(){ label: { break label; } return; }"));
+        }
+
+        // ── Getter/setter not detected as function body (v1 limitation) ──
+
+        @Test
+        void getterNotConverted() {
+            assertEquals("var o={get x(){return}}", JsMinifier.minify("var o = { get x(){ return; } }"));
+        }
+
+        @Test
+        void setterNotConverted() {
+            assertEquals("var o={set x(v){return}}", JsMinifier.minify("var o = { set x(v){ return; } }"));
+        }
+    }
+
     // ── Performance ──────────────────────────────────────────────────────
 
     @Nested
