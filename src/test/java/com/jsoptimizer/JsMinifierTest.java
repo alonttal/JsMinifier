@@ -58,12 +58,12 @@ class JsMinifierTest {
 
         @Test
         void removeNewlines() {
-            assertEquals("var x=1;var y=2;", JsMinifier.minify("var x = 1;\nvar y = 2;"));
+            assertEquals("var x=1,y=2;", JsMinifier.minify("var x = 1;\nvar y = 2;"));
         }
 
         @Test
         void windowsLineEndings() {
-            assertEquals("var x=1;var y=2;", JsMinifier.minify("var x = 1;\r\nvar y = 2;"));
+            assertEquals("var x=1,y=2;", JsMinifier.minify("var x = 1;\r\nvar y = 2;"));
         }
     }
 
@@ -83,7 +83,7 @@ class JsMinifierTest {
 
         @Test
         void multiLineCommentSpanning() {
-            assertEquals("var x=1;var y=2;",
+            assertEquals("var x=1,y=2;",
                     JsMinifier.minify("var x = 1; /* comment\nspanning\nlines */ var y = 2;"));
         }
 
@@ -385,7 +385,7 @@ class JsMinifierTest {
 
         @Test
         void destructuring() {
-            assertEquals("const{a,b}=obj;const[c,d]=arr;",
+            assertEquals("const{a,b}=obj,[c,d]=arr;",
                     JsMinifier.minify("const { a, b } = obj; const [c, d] = arr;"));
         }
 
@@ -456,7 +456,7 @@ class JsMinifierTest {
     class Idempotency {
         @Test
         void alreadyMinified() {
-            String minified = "var x=1;var y=2;function f(a,b){return a+b}";
+            String minified = "var x=1,y=2;function f(a,b){return a+b}";
             assertEquals(minified, JsMinifier.minify(minified));
         }
 
@@ -1693,7 +1693,7 @@ class JsMinifierTest {
         @Test
         void carriageReturnOnly() {
             // Old Mac-style \r only line endings
-            assertEquals("var x=1;var y=2;", JsMinifier.minify("var x = 1;\rvar y = 2;"));
+            assertEquals("var x=1,y=2;", JsMinifier.minify("var x = 1;\rvar y = 2;"));
         }
 
         @Test
@@ -2622,6 +2622,614 @@ class JsMinifierTest {
             String first = JsMinifier.minify(input);
             String second = JsMinifier.minify(first);
             assertEquals(first, second);
+        }
+    }
+
+    // ── Consecutive Declaration Merging ─────────────────────────────────
+
+    @Nested
+    class ConsecutiveDeclarationMerging {
+
+        // ── Basic merging ───────────────────────────────────────────────
+
+        @Test
+        void varMerge() {
+            assertEquals("var a=1,b=2;", JsMinifier.minify("var a=1;var b=2;"));
+        }
+
+        @Test
+        void letMerge() {
+            assertEquals("let a=1,b=2;", JsMinifier.minify("let a=1;let b=2;"));
+        }
+
+        @Test
+        void constMerge() {
+            assertEquals("const a=1,b=2;", JsMinifier.minify("const a=1;const b=2;"));
+        }
+
+        @Test
+        void threeConsecutive() {
+            assertEquals("var a=1,b=2,c=3;", JsMinifier.minify("var a=1;var b=2;var c=3;"));
+        }
+
+        // ── Different keywords NOT merged ───────────────────────────────
+
+        @Test
+        void varThenLet() {
+            assertEquals("var a=1;let b=2;", JsMinifier.minify("var a=1;let b=2;"));
+        }
+
+        @Test
+        void letThenConst() {
+            assertEquals("let a=1;const b=2;", JsMinifier.minify("let a=1;const b=2;"));
+        }
+
+        // ── Complex initializers ────────────────────────────────────────
+
+        @Test
+        void functionExpression() {
+            assertEquals("var a=function(){},b=2;", JsMinifier.minify("var a=function(){};var b=2;"));
+        }
+
+        @Test
+        void objectLiteral() {
+            assertEquals("var a={x:1},b=2;", JsMinifier.minify("var a={x:1};var b=2;"));
+        }
+
+        @Test
+        void arrayLiteral() {
+            assertEquals("var a=[1,2],b=3;", JsMinifier.minify("var a=[1,2];var b=3;"));
+        }
+
+        @Test
+        void arrowFunction() {
+            assertEquals("var a=(x)=>x,b=2;", JsMinifier.minify("var a=(x)=>x;var b=2;"));
+        }
+
+        // ── Strings/regex/templates containing keywords ─────────────────
+
+        @Test
+        void stringContainingVar() {
+            assertEquals("var a=\"var x\",b=1;", JsMinifier.minify("var a=\"var x\";var b=1;"));
+        }
+
+        @Test
+        void regexContainingVar() {
+            assertEquals("var a=/var/,b=1;", JsMinifier.minify("var a=/var/;var b=1;"));
+        }
+
+        // ── NOT merged across block boundaries ──────────────────────────
+
+        @Test
+        void differentBlocks() {
+            assertEquals("{var a=1}var b=2", JsMinifier.minify("{var a=1}var b=2"));
+        }
+
+        @Test
+        void ifBlock() {
+            assertEquals("if(x){var a=1}var b=2", JsMinifier.minify("if(x){var a=1}var b=2"));
+        }
+
+        // ── for-loop protection ─────────────────────────────────────────
+
+        @Test
+        void forLoopVar() {
+            assertEquals("for(var i=0;i<10;i++){}", JsMinifier.minify("for(var i=0;i<10;i++){}"));
+        }
+
+        @Test
+        void forLoopLet() {
+            assertEquals("for(let i=0;i<10;i++){}", JsMinifier.minify("for(let i=0;i<10;i++){}"));
+        }
+
+        // ── No declarations ─────────────────────────────────────────────
+
+        @Test
+        void noDeclarations() {
+            assertEquals("a=1;b=2;", JsMinifier.minify("a=1;b=2;"));
+        }
+
+        @Test
+        void alreadyMinifiedNoDecl() {
+            String input = "x+y;z();";
+            assertEquals(input, JsMinifier.minify(input));
+        }
+
+        // ── Destructuring ───────────────────────────────────────────────
+
+        @Test
+        void objectDestructuring() {
+            assertEquals("var{a}=x,{b}=y;", JsMinifier.minify("var{a}=x;var{b}=y;"));
+        }
+
+        @Test
+        void arrayDestructuring() {
+            assertEquals("var[a]=x,[b]=y;", JsMinifier.minify("var[a]=x;var[b]=y;"));
+        }
+
+        // ── Inside function body ────────────────────────────────────────
+
+        @Test
+        void insideFunctionBody() {
+            assertEquals("function f(){var a=1,b=2}",
+                    JsMinifier.minify("function f(){var a=1;var b=2}"));
+        }
+
+        // ── Idempotency ────────────────────────────────────────────────
+
+        @Test
+        void idempotency() {
+            String input = "var a=1;var b=2;var c=3;";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+
+        @Test
+        void doubleMinifyStability() {
+            String input = "var x = 1; var y = 2; let a = 3; let b = 4;";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+
+        // ── Edge cases ──────────────────────────────────────────────────
+
+        @Test
+        void singleDeclaration() {
+            assertEquals("var a=1;", JsMinifier.minify("var a=1;"));
+        }
+
+        @Test
+        void noTrailingSemicolon() {
+            assertEquals("var a=1,b=2", JsMinifier.minify("var a=1;var b=2"));
+        }
+
+        @Test
+        void noInitializer() {
+            assertEquals("var a,b;", JsMinifier.minify("var a;var b;"));
+        }
+
+        // ── From unminified source ──────────────────────────────────────
+
+        @Test
+        void fromUnminifiedSource() {
+            assertEquals("var a=1,b=2;",
+                    JsMinifier.minify("var a = 1;\nvar b = 2;"));
+        }
+
+        @Test
+        void fromUnminifiedThree() {
+            assertEquals("var a=1,b=2,c=3;",
+                    JsMinifier.minify("var a = 1;\nvar b = 2;\nvar c = 3;"));
+        }
+
+        @Test
+        void mixedKeywordsFromUnminified() {
+            assertEquals("var a=1;let b=2;const c=3;",
+                    JsMinifier.minify("var a = 1;\nlet b = 2;\nconst c = 3;"));
+        }
+
+        // ── Many consecutive ────────────────────────────────────────────
+
+        @Test
+        void fiveConsecutive() {
+            assertEquals("var a=1,b=2,c=3,d=4,e=5;",
+                    JsMinifier.minify("var a=1;var b=2;var c=3;var d=4;var e=5;"));
+        }
+
+        // ── Non-declaration interrupts chain ────────────────────────────
+
+        @Test
+        void statementInterruptsChain() {
+            assertEquals("var a=1;console.log(a);var b=2;",
+                    JsMinifier.minify("var a=1;console.log(a);var b=2;"));
+        }
+
+        @Test
+        void functionCallBetweenDeclarations() {
+            assertEquals("var a=1;f();var b=2;",
+                    JsMinifier.minify("var a=1;f();var b=2;"));
+        }
+
+        @Test
+        void assignmentBetweenDeclarations() {
+            assertEquals("var a=1;x=2;var b=3;",
+                    JsMinifier.minify("var a=1;x=2;var b=3;"));
+        }
+
+        @Test
+        void ifBetweenDeclarations() {
+            assertEquals("var a=1;if(x){}var b=2;",
+                    JsMinifier.minify("var a=1;if(x){}var b=2;"));
+        }
+
+        // ── Back-to-back merge groups ───────────────────────────────────
+
+        @Test
+        void twoMergeGroups() {
+            assertEquals("var a=1,b=2;let c=3,d=4;",
+                    JsMinifier.minify("var a=1;var b=2;let c=3;let d=4;"));
+        }
+
+        @Test
+        void threeMergeGroups() {
+            assertEquals("var a=1,b=2;let c=3,d=4;const e=5,f=6;",
+                    JsMinifier.minify("var a=1;var b=2;let c=3;let d=4;const e=5;const f=6;"));
+        }
+
+        // ── Complex initializers (more) ─────────────────────────────────
+
+        @Test
+        void ternaryInInitializer() {
+            assertEquals("var a=x?1:2,b=3;", JsMinifier.minify("var a=x?1:2;var b=3;"));
+        }
+
+        @Test
+        void nestedCallInInitializer() {
+            assertEquals("var a=f(g(h())),b=1;", JsMinifier.minify("var a=f(g(h()));var b=1;"));
+        }
+
+        @Test
+        void deeplyNestedBracesInInitializer() {
+            assertEquals("var a=function(){return{x:function(){}}},b=2;",
+                    JsMinifier.minify("var a=function(){return{x:function(){}}};var b=2;"));
+        }
+
+        @Test
+        void arrowWithBlockBody() {
+            assertEquals("var a=()=>{return 1},b=2;",
+                    JsMinifier.minify("var a=()=>{return 1};var b=2;"));
+        }
+
+        @Test
+        void nestedObjectLiteral() {
+            assertEquals("var a={x:{y:{z:1}}},b=2;",
+                    JsMinifier.minify("var a={x:{y:{z:1}}};var b=2;"));
+        }
+
+        @Test
+        void mixedBracesAndBrackets() {
+            assertEquals("var a={x:[1,2]},b=[{y:3}];",
+                    JsMinifier.minify("var a={x:[1,2]};var b=[{y:3}];"));
+        }
+
+        @Test
+        void functionWithIfElseBody() {
+            assertEquals("var a=function(){if(x){return 1}else{return 2}},b=3;",
+                    JsMinifier.minify("var a=function(){if(x){return 1}else{return 2}};var b=3;"));
+        }
+
+        // ── Strings with semicolons and keywords ────────────────────────
+
+        @Test
+        void stringWithSemicolon() {
+            assertEquals("var a=\"x;y;z\",b=1;",
+                    JsMinifier.minify("var a=\"x;y;z\";var b=1;"));
+        }
+
+        @Test
+        void stringWithSemicolonAndKeyword() {
+            assertEquals("var a=\";var x\",b=1;",
+                    JsMinifier.minify("var a=\";var x\";var b=1;"));
+        }
+
+        @Test
+        void singleQuoteStringWithSemicolon() {
+            assertEquals("var a=';let x',b=1;",
+                    JsMinifier.minify("var a=';let x';var b=1;"));
+        }
+
+        @Test
+        void escapedQuoteInString() {
+            // Quote optimizer swaps 'it\'s' → "it's"
+            assertEquals("var a=\"it's\",b=2;",
+                    JsMinifier.minify("var a='it\\'s';var b=2;"));
+        }
+
+        @Test
+        void escapedBackslashBeforeClosingQuote() {
+            assertEquals("var a=\"x\\\\\",b=1;",
+                    JsMinifier.minify("var a=\"x\\\\\";var b=1;"));
+        }
+
+        // ── Template literals with keywords ─────────────────────────────
+
+        @Test
+        void templateWithVarKeyword() {
+            assertEquals("var a=`var x`,b=1;",
+                    JsMinifier.minify("var a=`var x`;var b=1;"));
+        }
+
+        @Test
+        void templateWithSemicolonAndKeyword() {
+            assertEquals("var a=`;var x`,b=1;",
+                    JsMinifier.minify("var a=`;var x`;var b=1;"));
+        }
+
+        @Test
+        void templateWithExpression() {
+            assertEquals("var a=`${x+1}`,b=2;",
+                    JsMinifier.minify("var a=`${x+1}`;var b=2;"));
+        }
+
+        @Test
+        void templateWithNestedTemplate() {
+            assertEquals("var a=`${`inner`}`,b=2;",
+                    JsMinifier.minify("var a=`${`inner`}`;var b=2;"));
+        }
+
+        // ── Regex with semicolons and keywords ──────────────────────────
+
+        @Test
+        void regexWithSemicolon() {
+            assertEquals("var a=/;/,b=1;", JsMinifier.minify("var a=/;/;var b=1;"));
+        }
+
+        @Test
+        void regexWithFlags() {
+            assertEquals("var a=/test/gi,b=1;", JsMinifier.minify("var a=/test/gi;var b=1;"));
+        }
+
+        @Test
+        void regexWithSemicolonKeyword() {
+            assertEquals("var a=/;var/,b=1;", JsMinifier.minify("var a=/;var/;var b=1;"));
+        }
+
+        @Test
+        void regexWithCharClass() {
+            assertEquals("var a=/[;]/,b=1;", JsMinifier.minify("var a=/[;]/;var b=1;"));
+        }
+
+        // ── for-loop interactions ───────────────────────────────────────
+
+        @Test
+        void forLoopConst() {
+            assertEquals("for(const x of arr){}", JsMinifier.minify("for(const x of arr){}"));
+        }
+
+        @Test
+        void forLoopThenDeclarations() {
+            assertEquals("for(var i=0;i<10;i++){}var j=1,k=2;",
+                    JsMinifier.minify("for(var i=0;i<10;i++){}var j=1;var k=2;"));
+        }
+
+        @Test
+        void forLoopWithNestedParens() {
+            assertEquals("for(var i=(0);i<10;i++){}",
+                    JsMinifier.minify("for(var i=(0);i<10;i++){}"));
+        }
+
+        @Test
+        void forLoopWithFunctionCallInCondition() {
+            assertEquals("for(var i=0;f(i);i++){}",
+                    JsMinifier.minify("for(var i=0;f(i);i++){}"));
+        }
+
+        @Test
+        void nestedForLoops() {
+            assertEquals("for(var i=0;i<10;i++){for(var j=0;j<10;j++){}}",
+                    JsMinifier.minify("for(var i=0;i<10;i++){for(var j=0;j<10;j++){}}"));
+        }
+
+        @Test
+        void forInLoop() {
+            assertEquals("for(var x in y){}", JsMinifier.minify("for(var x in y){}"));
+        }
+
+        @Test
+        void forOfLoop() {
+            assertEquals("for(var x of y){}", JsMinifier.minify("for(var x of y){}"));
+        }
+
+        // ── Nested block scoping ────────────────────────────────────────
+
+        @Test
+        void mergeInsideNestedFunction() {
+            assertEquals("function f(){function g(){var a=1,b=2}}",
+                    JsMinifier.minify("function f(){function g(){var a=1;var b=2}}"));
+        }
+
+        @Test
+        void independentMergePerBlock() {
+            assertEquals("function f(){var a=1,b=2}function g(){var c=3,d=4}",
+                    JsMinifier.minify("function f(){var a=1;var b=2}function g(){var c=3;var d=4}"));
+        }
+
+        @Test
+        void declAfterClosingBraceNotMergedWithInner() {
+            // var inside if block should not merge with var after the block
+            assertEquals("if(x){var a=1}var b=2", JsMinifier.minify("if(x){var a=1}var b=2"));
+        }
+
+        @Test
+        void declsAfterClosingBraceMergeWithEachOther() {
+            // Two vars AFTER the block are at the same depth — they DO merge
+            assertEquals("if(x){var a=1}var b=2,c=3",
+                    JsMinifier.minify("if(x){var a=1}var b=2;var c=3"));
+        }
+
+        @Test
+        void mergeInsideIfBlock() {
+            assertEquals("if(x){var a=1,b=2}",
+                    JsMinifier.minify("if(x){var a=1;var b=2}"));
+        }
+
+        @Test
+        void switchCaseDeclarations() {
+            assertEquals("switch(x){case 1:var a=1,b=2;break}",
+                    JsMinifier.minify("switch(x){case 1:var a=1;var b=2;break}"));
+        }
+
+        // ── Declaration-like identifiers ────────────────────────────────
+
+        @Test
+        void varInIdentifierNotTriggered() {
+            // "variable" starts with "var" but isn't the keyword
+            assertEquals("variable=1;var b=2;",
+                    JsMinifier.minify("variable=1;var b=2;"));
+        }
+
+        @Test
+        void letInIdentifierNotTriggered() {
+            assertEquals("letter=1;let b=2;",
+                    JsMinifier.minify("letter=1;let b=2;"));
+        }
+
+        @Test
+        void constInIdentifierNotTriggered() {
+            assertEquals("constructor();const b=2;",
+                    JsMinifier.minify("constructor();const b=2;"));
+        }
+
+        @Test
+        void varFollowedByIdentStartingWithVar() {
+            // "var variable=1;var variance=2;" — both are var declarations
+            assertEquals("var variable=1,variance=2;",
+                    JsMinifier.minify("var variable=1;var variance=2;"));
+        }
+
+        // ── Empty declarations / semicolons ─────────────────────────────
+
+        @Test
+        void emptySemicolonsBetweenDeclarations() {
+            // var a=1;;var b=2 — the empty statement interrupts
+            assertEquals("var a=1;;var b=2;",
+                    JsMinifier.minify("var a=1;;var b=2;"));
+        }
+
+        @Test
+        void declarationWithOnlyComma() {
+            // Already comma-separated declarations — should not double-merge
+            assertEquals("var a=1,b=2;", JsMinifier.minify("var a=1,b=2;"));
+        }
+
+        // ── Interaction with other minifier features ────────────────────
+
+        @Test
+        void mergeWithLiteralShortening() {
+            assertEquals("var a=!0,b=!1,c=void 0;",
+                    JsMinifier.minify("var a = true; var b = false; var c = undefined;"));
+        }
+
+        @Test
+        void mergeWithNumericShortening() {
+            assertEquals("var a=1e3,b=.5;",
+                    JsMinifier.minify("var a = 1000; var b = 0.5;"));
+        }
+
+        @Test
+        void mergeWithStringQuoteOptimization() {
+            assertEquals("var a='he said \"hi\"',b=1;",
+                    JsMinifier.minify("var a = \"he said \\\"hi\\\"\"; var b = 1;"));
+        }
+
+        @Test
+        void mergeWithScientificNotation() {
+            assertEquals("var a=1e6,b=2e3,c=300;",
+                    JsMinifier.minify("var a = 1000000; var b = 2000; var c = 300;"));
+        }
+
+        @Test
+        void mergeWithInfinity() {
+            assertEquals("var a=(1/0),b=1;",
+                    JsMinifier.minify("var a = Infinity; var b = 1;"));
+        }
+
+        @Test
+        void mergeWithSemicolonBeforeBrace() {
+            // Semicolons stripped before } by main pass, then merge
+            assertEquals("function f(){var a=1,b=2}",
+                    JsMinifier.minify("function f() { var a = 1; var b = 2; }"));
+        }
+
+        // ── Keyword at end/start of input ───────────────────────────────
+
+        @Test
+        void declarationAtEndOfInput() {
+            assertEquals("var a=1", JsMinifier.minify("var a=1"));
+        }
+
+        @Test
+        void onlyDeclarations() {
+            assertEquals("var a=1,b=2,c=3",
+                    JsMinifier.minify("var a=1;var b=2;var c=3"));
+        }
+
+        // ── IIFE and complex expressions ────────────────────────────────
+
+        @Test
+        void iifeDoesNotBreakMerge() {
+            assertEquals("var a=(function(){return 1})(),b=2;",
+                    JsMinifier.minify("var a=(function(){return 1})();var b=2;"));
+        }
+
+        @Test
+        void classExpressionInitializer() {
+            assertEquals("var A=class{constructor(){}},b=1;",
+                    JsMinifier.minify("var A=class{constructor(){}};var b=1;"));
+        }
+
+        // ── Mixed destructuring ─────────────────────────────────────────
+
+        @Test
+        void mixedDestructuringAndNormal() {
+            assertEquals("var{a}=x,b=1,[c]=y;",
+                    JsMinifier.minify("var{a}=x;var b=1;var[c]=y;"));
+        }
+
+        @Test
+        void constDestructuring() {
+            assertEquals("const{a,b}=x,{c,d}=y;",
+                    JsMinifier.minify("const{a,b}=x;const{c,d}=y;"));
+        }
+
+        @Test
+        void letArrayDestructuring() {
+            assertEquals("let[a,b]=x,[c,d]=y;",
+                    JsMinifier.minify("let[a,b]=x;let[c,d]=y;"));
+        }
+
+        // ── Comprehensive idempotency ───────────────────────────────────
+
+        @Test
+        void doubleMinifyComplex() {
+            String input = "var a=function(){};var b={x:1};var c=[1,2];let d=1;let e=2;";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyWithInterruption() {
+            String input = "var a = 1; var b = 2; x(); var c = 3; var d = 4;";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyNestedBlocks() {
+            String input = "function f() { var a = 1; var b = 2; } function g() { var c = 3; var d = 4; }";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyAllFeatures() {
+            String input = "var a = true; var b = 1000; var c = 0.5; var d = \"he said \\\"hi\\\"\"; var e = Infinity;";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+
+        @Test
+        void doubleMinifyForAndDecl() {
+            String input = "for (var i = 0; i < 10; i++) {} var x = 1; var y = 2;";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second, "Not idempotent: first=" + first);
         }
     }
 

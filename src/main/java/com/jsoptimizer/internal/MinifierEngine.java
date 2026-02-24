@@ -68,7 +68,7 @@ public final class MinifierEngine {
                 case REGEX_LITERAL -> processRegex();
             }
         }
-        return out.toString();
+        return mergeConsecutiveDeclarations(out.toString());
     }
 
     // ── CODE state ──────────────────────────────────────────────────────
@@ -787,5 +787,267 @@ public final class MinifierEngine {
 
     private static boolean isIdentChar(char c) {
         return isIdentPart(c);
+    }
+
+    // ── Consecutive declaration merging (post-pass) ────────────────────
+
+    static String mergeConsecutiveDeclarations(String input) {
+        int len = input.length();
+        if (len == 0) return input;
+
+        StringBuilder result = new StringBuilder(len);
+
+        // Track the current active declaration keyword ("var", "let", "const") or null
+        String activeKeyword = null;
+        // Brace depth where the active declaration started
+        int activeBraceDepth = 0;
+
+        int braces = 0;   // { }
+        int parens = 0;    // ( )
+        int brackets = 0;  // [ ]
+        boolean inForParens = false; // inside for(...)
+
+        int i = 0;
+        while (i < len) {
+            char c = input.charAt(i);
+
+            // Skip string literals
+            if (c == '\'' || c == '"') {
+                int end = skipStringLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Skip template literals
+            if (c == '`') {
+                int end = skipTemplateLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Skip regex literals
+            if (c == '/' && i + 1 < len && isRegexStartInPostPass(input, result)) {
+                int end = skipRegexLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Track depth
+            if (c == '(') {
+                parens++;
+                // Detect for( — check if "for" precedes this paren
+                if (!inForParens && parens == 1 + countParensInStack(input, i)) {
+                    // Simpler: check the word before '('
+                    if (isForBefore(input, i)) {
+                        inForParens = true;
+                    }
+                }
+            } else if (c == ')') {
+                if (inForParens && parens == 1) {
+                    inForParens = false;
+                }
+                if (parens > 0) parens--;
+            } else if (c == '[') {
+                brackets++;
+            } else if (c == ']') {
+                if (brackets > 0) brackets--;
+            } else if (c == '{') {
+                // Closing brace boundary: reset active keyword if we're entering a new block
+                braces++;
+            } else if (c == '}') {
+                if (braces > 0) braces--;
+                // Reset active declaration only if we exit the block where it started
+                if (activeKeyword != null && braces < activeBraceDepth) {
+                    activeKeyword = null;
+                }
+            }
+
+            // At semicolons (not inside for-parens, not inside parens/brackets),
+            // check if the next token is a matching declaration keyword
+            if (c == ';' && !inForParens && parens == 0 && brackets == 0
+                    && activeKeyword != null && braces == activeBraceDepth) {
+                // Look ahead past the semicolon for the same keyword
+                int afterSemi = i + 1;
+                String kw = activeKeyword;
+                if (afterSemi + kw.length() < len
+                        && input.startsWith(kw, afterSemi)
+                        && afterSemi + kw.length() < len
+                        && !isIdentPart(input.charAt(afterSemi + kw.length()))) {
+                    // Replace ;keyword with ,
+                    result.append(',');
+                    i = afterSemi + kw.length();
+                    // Skip optional space after keyword
+                    if (i < len && input.charAt(i) == ' ') {
+                        i++;
+                    }
+                    continue;
+                }
+                // Semicolon but next is not the same keyword — reset
+                activeKeyword = null;
+                result.append(c);
+                i++;
+                continue;
+            }
+
+            // Detect declaration keyword at current position (only when no active declaration
+            // or when at top-level of current block and not inside parens/brackets)
+            if (activeKeyword == null && parens == 0 && brackets == 0) {
+                String kw = matchDeclKeyword(input, i, len);
+                if (kw != null) {
+                    // Make sure it's not preceded by an ident char (e.g., "avar")
+                    if (i == 0 || !isIdentPart(input.charAt(i - 1))) {
+                        activeKeyword = kw;
+                        activeBraceDepth = braces;
+                        result.append(kw);
+                        i += kw.length();
+                        // Skip optional space after keyword
+                        if (i < len && input.charAt(i) == ' ') {
+                            result.append(' ');
+                            i++;
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            result.append(c);
+            i++;
+        }
+
+        return result.toString();
+    }
+
+    private static String matchDeclKeyword(String input, int pos, int len) {
+        if (pos + 3 < len && input.startsWith("var", pos) && !isIdentPart(input.charAt(pos + 3))) {
+            return "var";
+        }
+        if (pos + 3 < len && input.startsWith("let", pos) && !isIdentPart(input.charAt(pos + 3))) {
+            return "let";
+        }
+        if (pos + 5 < len && input.startsWith("const", pos) && !isIdentPart(input.charAt(pos + 5))) {
+            return "const";
+        }
+        return null;
+    }
+
+    private static boolean isForBefore(String input, int parenPos) {
+        // Check if the characters before '(' spell "for"
+        int j = parenPos - 1;
+        // skip optional space
+        while (j >= 0 && input.charAt(j) == ' ') j--;
+        if (j >= 2 && input.charAt(j) == 'r' && input.charAt(j - 1) == 'o' && input.charAt(j - 2) == 'f') {
+            // Make sure 'f' is not part of a longer identifier
+            if (j - 2 == 0 || !isIdentPart(input.charAt(j - 3))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int countParensInStack(String input, int pos) {
+        // Not needed for our simplified approach — always check parens == 0 for merging
+        return 0;
+    }
+
+    private static int skipStringLiteral(String input, int start) {
+        char quote = input.charAt(start);
+        int i = start + 1;
+        int len = input.length();
+        while (i < len) {
+            char c = input.charAt(i);
+            if (c == '\\' && i + 1 < len) {
+                i += 2; // skip escape
+            } else if (c == quote) {
+                return i + 1;
+            } else {
+                i++;
+            }
+        }
+        return len;
+    }
+
+    private static int skipTemplateLiteral(String input, int start) {
+        int i = start + 1;
+        int len = input.length();
+        int depth = 0;
+        while (i < len) {
+            char c = input.charAt(i);
+            if (c == '\\' && i + 1 < len) {
+                i += 2;
+            } else if (c == '$' && i + 1 < len && input.charAt(i + 1) == '{') {
+                depth++;
+                i += 2;
+            } else if (c == '}' && depth > 0) {
+                depth--;
+                i++;
+            } else if (c == '`' && depth == 0) {
+                return i + 1;
+            } else if (c == '`' && depth > 0) {
+                // Nested template literal inside expression — recurse
+                int end = skipTemplateLiteral(input, i);
+                i = end;
+            } else {
+                i++;
+            }
+        }
+        return len;
+    }
+
+    private static int skipRegexLiteral(String input, int start) {
+        int i = start + 1; // skip opening /
+        int len = input.length();
+        while (i < len) {
+            char c = input.charAt(i);
+            if (c == '\\' && i + 1 < len) {
+                i += 2;
+            } else if (c == '[') {
+                // Character class — skip until ]
+                i++;
+                while (i < len) {
+                    char cc = input.charAt(i);
+                    if (cc == '\\' && i + 1 < len) {
+                        i += 2;
+                    } else if (cc == ']') {
+                        i++;
+                        break;
+                    } else {
+                        i++;
+                    }
+                }
+            } else if (c == '/') {
+                i++; // skip closing /
+                // Consume flags
+                while (i < len && isIdentPart(input.charAt(i))) {
+                    i++;
+                }
+                return i;
+            } else {
+                i++;
+            }
+        }
+        return len;
+    }
+
+    private static boolean isRegexStartInPostPass(String input, StringBuilder result) {
+        // Simple heuristic: check the last non-space character in result
+        if (result.isEmpty()) return true;
+        int j = result.length() - 1;
+        char prev = result.charAt(j);
+        // After these, '/' is division, not regex
+        if (prev == ')' || prev == ']' || prev == '}') return false;
+        if (isIdentPart(prev)) {
+            // Could be keyword or identifier — check if it's a regex-preceding keyword
+            int start = j;
+            while (start > 0 && isIdentPart(result.charAt(start - 1))) {
+                start--;
+            }
+            String word = result.substring(start, j + 1);
+            return REGEX_PRECEDING_KEYWORDS.contains(word);
+        }
+        // After operators, it's regex
+        return true;
     }
 }
