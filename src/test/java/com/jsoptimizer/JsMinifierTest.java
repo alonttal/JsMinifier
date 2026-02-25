@@ -1724,7 +1724,7 @@ class JsMinifierTest {
 
         @Test
         void adjacentStrings() {
-            assertEquals("\"a\"+\"b\"", JsMinifier.minify("\"a\" + \"b\""));
+            assertEquals("\"ab\"", JsMinifier.minify("\"a\" + \"b\""));
         }
 
         @Test
@@ -5444,6 +5444,479 @@ class JsMinifierTest {
             String first = JsMinifier.minify(input);
             String second = JsMinifier.minify(first);
             assertEquals(first, second, "Not idempotent: first=" + first);
+        }
+    }
+
+    // ── String Concatenation Folding ────────────────────────────────────
+
+    @Nested
+    class StringConcatenationFolding {
+
+        // Basic folding
+        @Test void foldDoubleQuoted() { assertEquals("\"ab\"", JsMinifier.minify("\"a\"+\"b\"")); }
+        @Test void foldSingleQuoted() { assertEquals("'ab'", JsMinifier.minify("'a'+'b'")); }
+        @Test void foldChainOf3() { assertEquals("\"abc\"", JsMinifier.minify("\"a\"+\"b\"+\"c\"")); }
+        @Test void foldChainOf4() { assertEquals("\"abcd\"", JsMinifier.minify("\"a\"+\"b\"+\"c\"+\"d\"")); }
+        @Test void foldEmptyStrings() { assertEquals("\"\"", JsMinifier.minify("\"\"+\"\"")); }
+        @Test void foldEmptyPlusContent() { assertEquals("\"a\"", JsMinifier.minify("\"\"+\"a\"")); }
+        @Test void foldContentPlusEmpty() { assertEquals("\"a\"", JsMinifier.minify("\"a\"+\"\"")); }
+        @Test void foldWithSpaces() { assertEquals("\"hello world\"", JsMinifier.minify("\"hello \"+\"world\"")); }
+
+        // Escape handling
+        @Test void preserveNewlineEscape() { assertEquals("\"a\\nb\"", JsMinifier.minify("\"a\\n\"+\"b\"")); }
+        @Test void preserveEscapedBackslash() { assertEquals("\"a\\\\b\"", JsMinifier.minify("\"a\\\\\"+\"b\"")); }
+        @Test void preserveUnicodeEscape() { assertEquals("\"\\u0041B\"", JsMinifier.minify("\"\\u0041\"+\"B\"")); }
+        @Test void preserveMultipleEscapes() { assertEquals("\"a\\tb\\n\"", JsMinifier.minify("\"a\\t\"+\"b\\n\"")); }
+
+        // Mixed quotes — NOT folded
+        @Test void mixedQuotesDoubleFirst() { assertEquals("\"a\"+'b'", JsMinifier.minify("\"a\"+'b'")); }
+        @Test void mixedQuotesSingleFirst() { assertEquals("'a'+\"b\"", JsMinifier.minify("'a'+\"b\"")); }
+
+        // Operator precedence — NOT folded (unsafe before)
+        @Test void unsafeBeforeMul() { assertEquals("x*\"a\"+\"b\"", JsMinifier.minify("x*\"a\"+\"b\"")); }
+        @Test void unsafeBeforeDiv() { assertEquals("x/\"a\"+\"b\"", JsMinifier.minify("x/\"a\"+\"b\"")); }
+        @Test void unsafeBeforeMod() { assertEquals("x%\"a\"+\"b\"", JsMinifier.minify("x%\"a\"+\"b\"")); }
+        @Test void unsafeBeforeSub() { assertEquals("x-\"a\"+\"b\"", JsMinifier.minify("x-\"a\"+\"b\"")); }
+        @Test void unsafeBeforeBang() { assertEquals("!\"a\"+\"b\"", JsMinifier.minify("!\"a\"+\"b\"")); }
+        @Test void unsafeBeforeTilde() { assertEquals("~\"a\"+\"b\"", JsMinifier.minify("~\"a\"+\"b\"")); }
+        @Test void unsafeBeforeTypeof() { assertEquals("typeof\"a\"+\"b\"", JsMinifier.minify("typeof\"a\"+\"b\"")); }
+        @Test void unsafeBeforeVoid() { assertEquals("void\"a\"+\"b\"", JsMinifier.minify("void\"a\"+\"b\"")); }
+        @Test void unsafeBeforeDelete() { assertEquals("delete\"a\"+\"b\"", JsMinifier.minify("delete\"a\"+\"b\"")); }
+
+        // Operator precedence — NOT folded (unsafe after)
+        @Test void unsafeAfterMul() { assertEquals("\"a\"+\"b\"*x", JsMinifier.minify("\"a\"+\"b\"*x")); }
+        @Test void unsafeAfterDiv() { assertEquals("\"a\"+\"b\"/x", JsMinifier.minify("\"a\"+\"b\"/x")); }
+        @Test void unsafeAfterMod() { assertEquals("\"a\"+\"b\"%x", JsMinifier.minify("\"a\"+\"b\"%x")); }
+
+        // Safe contexts — folded
+        @Test void safeInVarDecl() { assertEquals("var x=\"ab\"", JsMinifier.minify("var x=\"a\"+\"b\"")); }
+        @Test void safeInFuncCall() { assertEquals("f(\"ab\")", JsMinifier.minify("f(\"a\"+\"b\")")); }
+        @Test void safeInArray() { assertEquals("[\"ab\"]", JsMinifier.minify("[\"a\"+\"b\"]")); }
+        @Test void safeInObject() { assertEquals("{x:\"ab\"}", JsMinifier.minify("{x:\"a\"+\"b\"}")); }
+        @Test void safeInTernary() { assertEquals("x?\"ab\":\"c\"", JsMinifier.minify("x?\"a\"+\"b\":\"c\"")); }
+        @Test void safeAfterReturn() { assertEquals("return\"ab\"", JsMinifier.minify("return\"a\"+\"b\"")); }
+        @Test void safeAfterCase() { assertEquals("case\"ab\":", JsMinifier.minify("case\"a\"+\"b\":")); }
+        @Test void safeAfterComma() { assertEquals("x,\"ab\"", JsMinifier.minify("x,\"a\"+\"b\"")); }
+        @Test void safeAfterAssign() { assertEquals("x=\"ab\"", JsMinifier.minify("x=\"a\"+\"b\"")); }
+        @Test void safeAfterBinaryPlus() { assertEquals("x+\"ab\"", JsMinifier.minify("x+\"a\"+\"b\"")); }
+
+        // Partial folding
+        @Test void partialFoldBeforeVar() { assertEquals("\"ab\"+x", JsMinifier.minify("\"a\"+\"b\"+x")); }
+        @Test void partialFoldAfterVar() { assertEquals("x+\"ab\"", JsMinifier.minify("x+\"a\"+\"b\"")); }
+        @Test void partialFoldUnsafeAfterInChain() {
+            assertEquals("\"ab\"+\"c\"*x", JsMinifier.minify("\"a\"+\"b\"+\"c\"*x"));
+        }
+        @Test void partialFoldUnsafeBeforeInChain() {
+            assertEquals("x*\"a\"+\"bc\"", JsMinifier.minify("x*\"a\"+\"b\"+\"c\""));
+        }
+        @Test void twoSeparateFoldGroups() {
+            assertEquals("\"ab\"+x+\"cd\"", JsMinifier.minify("\"a\"+\"b\"+x+\"c\"+\"d\""));
+        }
+
+        // Template/regex not affected
+        @Test void templateLiteralsNotFolded() { assertEquals("`a`+`b`", JsMinifier.minify("`a`+`b`")); }
+        @Test void regexNotFolded() { assertEquals("\"a\"+/regex/", JsMinifier.minify("\"a\"+/regex/")); }
+        @Test void mixedStringTemplate() { assertEquals("\"a\"+`b`", JsMinifier.minify("\"a\"+`b`")); }
+
+        // String content not confused
+        @Test void plusInsideString() { assertEquals("\"a+b\"", JsMinifier.minify("\"a+b\"")); }
+        @Test void foldWithPlusInContent() { assertEquals("\"ab+c\"", JsMinifier.minify("\"a\"+\"b+c\"")); }
+
+        // Interaction with other optimizations
+        @Test void foldEnablesBracketToDot() { assertEquals("obj.ab", JsMinifier.minify("obj[\"a\"+\"b\"]")); }
+        @Test void foldWithLiteralShortening() { assertEquals("[!0,\"ab\"]", JsMinifier.minify("[true,\"a\"+\"b\"]")); }
+        @Test void foldWithArrowShortening() { assertEquals("()=>\"ab\"", JsMinifier.minify("()=>{return \"a\"+\"b\"}")); }
+
+        // Idempotency
+        @Test void alreadyFolded() { assertEquals("\"ab\"", JsMinifier.minify("\"ab\"")); }
+        @Test void doubleMinifyStability() {
+            String once = JsMinifier.minify("\"a\"+\"b\"");
+            String twice = JsMinifier.minify(once);
+            assertEquals(once, twice);
+        }
+        @Test void doubleMinifyComplexStability() {
+            String once = JsMinifier.minify("x+\"a\"+\"b\"+y");
+            String twice = JsMinifier.minify(once);
+            assertEquals(once, twice);
+        }
+
+        // Edge cases
+        @Test void stringAtStartOfInput() { assertEquals("\"ab\";x", JsMinifier.minify("\"a\"+\"b\";x")); }
+        @Test void stringAtEndOfInput() { assertEquals("x;\"ab\"", JsMinifier.minify("x;\"a\"+\"b\"")); }
+        @Test void multipleFoldGroups() { assertEquals("\"ab\";x;\"cd\"", JsMinifier.minify("\"a\"+\"b\";x;\"c\"+\"d\"")); }
+        @Test void longChain() {
+            assertEquals("\"abcdef\"", JsMinifier.minify("\"a\"+\"b\"+\"c\"+\"d\"+\"e\"+\"f\""));
+        }
+        @Test void htmlStrings() {
+            assertEquals("\"<div></div>\"", JsMinifier.minify("\"<div>\"+\"</div>\""));
+        }
+        @Test void subtractNotFolded() { assertEquals("\"a\"-\"b\"", JsMinifier.minify("\"a\"-\"b\"")); }
+        @Test void complexPartialFold() {
+            assertEquals("\"abc\"+x+\"de\"", JsMinifier.minify("\"a\"+\"b\"+\"c\"+x+\"d\"+\"e\""));
+        }
+    }
+
+    // ── String Concatenation Folding — Semantic Safety ─────────────────
+
+    @Nested
+    class StringConcatenationFoldingSemantic {
+
+        // ── Property access on last string (. and []) — must NOT fold ────
+
+        @Test void dotPropertyOnLastString() {
+            // "a" + ("b".length) = "a" + 1 = "a1"  vs  "ab".length = 2
+            assertEquals("\"a\"+\"b\".length", JsMinifier.minify("\"a\"+\"b\".length"));
+        }
+
+        @Test void dotMethodOnLastString() {
+            // "a" + ("b".toUpperCase()) = "a" + "B" = "aB"  vs  "ab".toUpperCase() = "AB"
+            assertEquals("\"a\"+\"b\".toUpperCase()", JsMinifier.minify("\"a\"+\"b\".toUpperCase()"));
+        }
+
+        @Test void dotSliceOnLastString() {
+            // "hello " + ("world".toUpperCase()) = "hello WORLD"
+            // vs "hello world".toUpperCase() = "HELLO WORLD"
+            assertEquals("\"hello \"+\"world\".toUpperCase()",
+                    JsMinifier.minify("\"hello \"+\"world\".toUpperCase()"));
+        }
+
+        @Test void dotCharAtOnLastString() {
+            // "x" + ("y".charAt(0)) = "x" + "y" = "xy"  vs  "xy".charAt(0) = "x"
+            assertEquals("\"x\"+\"y\".charAt(0)", JsMinifier.minify("\"x\"+\"y\".charAt(0)"));
+        }
+
+        @Test void dotSliceMethodOnLastString() {
+            // "abc" + ("def".slice(1)) = "abc" + "ef" = "abcef"
+            // vs "abcdef".slice(1) = "bcdef"
+            assertEquals("\"abc\"+\"def\".slice(1)", JsMinifier.minify("\"abc\"+\"def\".slice(1)"));
+        }
+
+        @Test void bracketIndexOnLastString() {
+            // "a" + ("b"[0]) = "a" + "b" = "ab"  vs  "ab"[0] = "a"
+            assertEquals("\"a\"+\"b\"[0]", JsMinifier.minify("\"a\"+\"b\"[0]"));
+        }
+
+        @Test void bracketStringKeyOnLastString() {
+            // "a" + ("b"["length"]) = "a" + 1 = "a1"  vs  "ab"["length"] = 2
+            // Fold correctly preserves "b"["length"], then convertBracketToDot
+            // converts it to "b".length — semantics are preserved
+            assertEquals("\"a\"+\"b\".length", JsMinifier.minify("\"a\"+\"b\"[\"length\"]"));
+        }
+
+        @Test void dotOnThirdStringInChain() {
+            // "a"+"b" should fold, but "c".length should NOT be captured
+            // "a"+"b"+"c".length = ("a"+"b") + ("c".length) = "ab" + 1 = "ab1"
+            // vs "abc".length = 3
+            assertEquals("\"ab\"+\"c\".length", JsMinifier.minify("\"a\"+\"b\"+\"c\".length"));
+        }
+
+        @Test void dotOnMiddleStringStopsChain() {
+            // "a"+"b".length+"c" = "a" + 1 + "c" = "a1c"
+            // Must not fold "a"+"b" because "b".length captures "b"
+            assertEquals("\"a\"+\"b\".length+\"c\"", JsMinifier.minify("\"a\"+\"b\".length+\"c\""));
+        }
+
+        // ── Optional chaining after string — must NOT fold ───────────────
+
+        @Test void optionalChainingOnLastString() {
+            // "a" + ("b"?.length) = "a" + 1 = "a1"  vs  "ab"?.length = 2
+            assertEquals("\"a\"+\"b\"?.length", JsMinifier.minify("\"a\"+\"b\"?.length"));
+        }
+
+        // ── Function call on last string — must NOT fold ─────────────────
+
+        @Test void funcCallOnLastString() {
+            // "a" + ("b"(x)) — both throw but with different identity
+            assertEquals("\"a\"+\"b\"(x)", JsMinifier.minify("\"a\"+\"b\"(x)"));
+        }
+
+        // ── Tagged template on last string — must NOT fold ───────────────
+
+        @Test void taggedTemplateOnLastString() {
+            assertEquals("\"a\"+\"b\"`x`", JsMinifier.minify("\"a\"+\"b\"`x`"));
+        }
+
+        // ── Exponentiation ** after last string — must NOT fold ──────────
+
+        @Test void exponentiationAfterLastString() {
+            // "a" + ("b" ** x) — ** has higher precedence than +
+            assertEquals("\"a\"+\"b\"**x", JsMinifier.minify("\"a\"+\"b\"**x"));
+        }
+
+        // ── Unary + before string chain — must NOT fold ──────────────────
+
+        @Test void unaryPlusBeforeStringConcat() {
+            // (+"a") + "b" = NaN + "b" = "NaNb"  vs  +"ab" = NaN
+            assertEquals("+\"a\"+\"b\"", JsMinifier.minify("+\"a\"+\"b\""));
+        }
+
+        @Test void unaryPlusInAssignment() {
+            // x = (+"a") + "b" = "NaNb"  vs  x = +"ab" = NaN
+            assertEquals("x=+\"a\"+\"b\"", JsMinifier.minify("x = +\"a\" + \"b\""));
+        }
+
+        @Test void unaryPlusInParens() {
+            // (+"a") + "b" = "NaNb"  vs  (+"ab") = NaN
+            assertEquals("(+\"a\"+\"b\")", JsMinifier.minify("(+\"a\"+\"b\")"));
+        }
+
+        @Test void unaryPlusInArray() {
+            // [+"a"+"b"] = ["NaNb"]  vs  [+"ab"] = [NaN]
+            assertEquals("[+\"a\"+\"b\"]", JsMinifier.minify("[+\"a\"+\"b\"]"));
+        }
+
+        @Test void unaryPlusAfterComma() {
+            // x, (+"a") + "b" = "NaNb"  vs  x, +"ab" = NaN
+            assertEquals("x,+\"a\"+\"b\"", JsMinifier.minify("x, +\"a\" + \"b\""));
+        }
+
+        @Test void unaryPlusAfterSemicolon() {
+            // +"a" + "b" as expression statement = "NaNb"
+            assertEquals("x;+\"a\"+\"b\"", JsMinifier.minify("x; +\"a\" + \"b\""));
+        }
+
+        @Test void unaryPlusAfterColon() {
+            // x ? y : +"a"+"b" = "NaNb"
+            assertEquals("x?y:+\"a\"+\"b\"", JsMinifier.minify("x ? y : +\"a\" + \"b\""));
+        }
+
+        @Test void unaryPlusAfterQuestionMark() {
+            // x ? +"a"+"b" : y = "NaNb"
+            assertEquals("x?+\"a\"+\"b\":y", JsMinifier.minify("x ? +\"a\" + \"b\" : y"));
+        }
+
+        // ── Binary + before string IS safe — should fold ─────────────────
+
+        @Test void binaryPlusAfterIdentSafe() {
+            // x + "a" + "b" = x + "ab" (left-to-right, + is assoc for strings)
+            assertEquals("x+\"ab\"", JsMinifier.minify("x+\"a\"+\"b\""));
+        }
+
+        @Test void binaryPlusAfterCloseParen() {
+            // f() + "a" + "b" = f() + "ab"
+            assertEquals("f()+\"ab\"", JsMinifier.minify("f()+\"a\"+\"b\""));
+        }
+
+        @Test void binaryPlusAfterCloseBracket() {
+            // x[0] + "a" + "b" = x[0] + "ab"
+            assertEquals("x[0]+\"ab\"", JsMinifier.minify("x[0]+\"a\"+\"b\""));
+        }
+
+        @Test void binaryPlusAfterStringLiteral() {
+            // "x" + "a" + "b" = "xab"
+            assertEquals("\"xab\"", JsMinifier.minify("\"x\"+\"a\"+\"b\""));
+        }
+
+        @Test void binaryPlusAfterPostfixIncrement() {
+            // x++ + "a" + "b" — ++ produces expression, + is binary
+            assertEquals("x++ +\"ab\"", JsMinifier.minify("x++ + \"a\" + \"b\""));
+        }
+
+        // ── Lower-precedence operators after — safe, should fold ─────────
+
+        @Test void equalityAfterFold() {
+            assertEquals("\"ab\"==x", JsMinifier.minify("\"a\"+\"b\"==x"));
+        }
+
+        @Test void strictEqualityAfterFold() {
+            assertEquals("\"ab\"===x", JsMinifier.minify("\"a\"+\"b\"===x"));
+        }
+
+        @Test void inequalityAfterFold() {
+            assertEquals("\"ab\"!=x", JsMinifier.minify("\"a\"+\"b\"!=x"));
+        }
+
+        @Test void strictInequalityAfterFold() {
+            assertEquals("\"ab\"!==x", JsMinifier.minify("\"a\"+\"b\"!==x"));
+        }
+
+        @Test void lessThanAfterFold() {
+            assertEquals("\"ab\"<x", JsMinifier.minify("\"a\"+\"b\"<x"));
+        }
+
+        @Test void greaterThanAfterFold() {
+            assertEquals("\"ab\">x", JsMinifier.minify("\"a\"+\"b\">x"));
+        }
+
+        @Test void lessThanOrEqualAfterFold() {
+            assertEquals("\"ab\"<=x", JsMinifier.minify("\"a\"+\"b\"<=x"));
+        }
+
+        @Test void greaterThanOrEqualAfterFold() {
+            assertEquals("\"ab\">=x", JsMinifier.minify("\"a\"+\"b\">=x"));
+        }
+
+        @Test void logicalAndAfterFold() {
+            assertEquals("\"ab\"&&x", JsMinifier.minify("\"a\"+\"b\"&&x"));
+        }
+
+        @Test void logicalOrAfterFold() {
+            assertEquals("\"ab\"||x", JsMinifier.minify("\"a\"+\"b\"||x"));
+        }
+
+        @Test void nullishCoalescingAfterFold() {
+            assertEquals("\"ab\"??x", JsMinifier.minify("\"a\"+\"b\"??x"));
+        }
+
+        @Test void ternaryAfterFold() {
+            assertEquals("\"ab\"?x:y", JsMinifier.minify("\"a\"+\"b\"?x:y"));
+        }
+
+        @Test void commaAfterFold() {
+            assertEquals("\"ab\",x", JsMinifier.minify("\"a\"+\"b\",x"));
+        }
+
+        @Test void inOperatorAfterFold() {
+            assertEquals("\"ab\"in x", JsMinifier.minify("\"a\"+\"b\" in x"));
+        }
+
+        @Test void instanceofAfterFold() {
+            assertEquals("\"ab\"instanceof x", JsMinifier.minify("\"a\"+\"b\" instanceof x"));
+        }
+
+        @Test void leftShiftAfterFold() {
+            assertEquals("\"ab\"<<x", JsMinifier.minify("\"a\"+\"b\"<<x"));
+        }
+
+        @Test void rightShiftAfterFold() {
+            assertEquals("\"ab\">>x", JsMinifier.minify("\"a\"+\"b\">>x"));
+        }
+
+        @Test void unsignedRightShiftAfterFold() {
+            assertEquals("\"ab\">>>x", JsMinifier.minify("\"a\"+\"b\">>>x"));
+        }
+
+        @Test void bitwiseAndAfterFold() {
+            assertEquals("\"ab\"&x", JsMinifier.minify("\"a\"+\"b\"&x"));
+        }
+
+        @Test void bitwiseOrAfterFold() {
+            assertEquals("\"ab\"|x", JsMinifier.minify("\"a\"+\"b\"|x"));
+        }
+
+        @Test void bitwiseXorAfterFold() {
+            assertEquals("\"ab\"^x", JsMinifier.minify("\"a\"+\"b\"^x"));
+        }
+
+        // ── Assignment operators — safe context before ────────────────────
+
+        @Test void plusEqualsBeforeFold() {
+            assertEquals("x+=\"ab\"", JsMinifier.minify("x += \"a\" + \"b\""));
+        }
+
+        @Test void minusEqualsBeforeFold() {
+            assertEquals("x-=\"ab\"", JsMinifier.minify("x -= \"a\" + \"b\""));
+        }
+
+        // ── Safe keyword contexts (low-precedence keywords) ──────────────
+
+        @Test void throwBeforeFold() {
+            assertEquals("throw\"ab\"", JsMinifier.minify("throw \"a\" + \"b\""));
+        }
+
+        @Test void returnBeforeFold() {
+            assertEquals("return\"ab\"", JsMinifier.minify("return \"a\" + \"b\""));
+        }
+
+        @Test void yieldBeforeFold() {
+            // yield has very low precedence, + binds tighter — safe
+            assertEquals("yield\"ab\"", JsMinifier.minify("yield \"a\" + \"b\""));
+        }
+
+        @Test void awaitBeforeFold() {
+            assertEquals("await\"ab\"", JsMinifier.minify("await \"a\" + \"b\""));
+        }
+
+        // ── new keyword with parens — safe ───────────────────────────────
+
+        @Test void newStringWithConcatInParens() {
+            // new String("a"+"b") — ( before "a" makes it safe
+            assertEquals("new String(\"ab\")", JsMinifier.minify("new String(\"a\" + \"b\")"));
+        }
+
+        // ── Partial fold with dot stops correctly ────────────────────────
+
+        @Test void chainStopsBeforeDotOnLast() {
+            // "a"+"b"+"c".length — fold "a"+"b", stop before "c" which has .length
+            assertEquals("\"ab\"+\"c\".length", JsMinifier.minify("\"a\"+\"b\"+\"c\".length"));
+        }
+
+        @Test void chainStopsBeforeBracketOnLast() {
+            assertEquals("\"ab\"+\"c\"[0]", JsMinifier.minify("\"a\"+\"b\"+\"c\"[0]"));
+        }
+
+        @Test void noFoldWhenOnlyStringHasDot() {
+            // Only one string and it has .length — nothing to fold anyway
+            assertEquals("\"a\".length", JsMinifier.minify("\"a\".length"));
+        }
+
+        // ── Complex mixed scenarios ──────────────────────────────────────
+
+        @Test void unaryPlusThenDotMixed() {
+            // +("a".length) is 1, different from +"a" = NaN
+            assertEquals("+\"a\".length", JsMinifier.minify("+\"a\".length"));
+        }
+
+        @Test void multipleUnsafeBoundaries() {
+            // x * "a" + "b" + "c" . length
+            // x*"a" is unsafe before, .length is unsafe after "c"
+            // Only "b"+"c" could fold, but "c".length makes "c" unsafe
+            // So: "b" alone has nothing to fold with — no folding at all? Actually:
+            // x*"a" — "a" not folded (unsafe before *)
+            // +"b" — "b" now, isSafeBefore sees + which is binary (after "a", an identpart? no after closing quote)
+            // Actually the post-pass input is: x*"a"+"b"+"c".length
+            // At "a": isSafeBefore sees *, unsafe → emit "a" as-is
+            // At "b": isSafeBefore sees +, before + is closing " which is identpart? No, " is not identpart.
+            // Hmm, " is a quote char. The check: beforePlus is '"'. result.charAt(result.length()-2) when result is `x*"a"+`
+            // result[-2] is `"` (from the closing quote of "a"). `'"'` is listed in safe cases. So + is binary. Safe.
+            // Read "b". Try extend: next is +, then "c". Read "c". Check isUnsafeAfter: char after "c" closing quote is `.`. Unsafe! Stop.
+            // Chain = ["b"] only, count=1. No fold. Emit "b".
+            // Then at "c": isSafeBefore sees +, before + is "b" closing quote `"`. Safe binary +.
+            // Read "c". Try extend: next is `.`, not `+`. Chain=1. No fold.
+            assertEquals("x*\"a\"+\"b\"+\"c\".length", JsMinifier.minify("x*\"a\"+\"b\"+\"c\".length"));
+        }
+
+        @Test void foldGroupBeforeDotGroup() {
+            // "a"+"b"+"c"+"d".length
+            // "a"+"b"+"c" fold, "d".length does not
+            assertEquals("\"abc\"+\"d\".length", JsMinifier.minify("\"a\"+\"b\"+\"c\"+\"d\".length"));
+        }
+
+        @Test void dotDoesNotAffectEarlierSeparateGroup() {
+            // "a"+"b"; "c"+"d".length
+            // First group folds fine, second group: "c" can't fold with "d" because "d".length
+            assertEquals("\"ab\";\"c\"+\"d\".length", JsMinifier.minify("\"a\"+\"b\";\"c\"+\"d\".length"));
+        }
+
+        @Test void safeAfterNewWithParens() {
+            // new Foo("a"+"b") — the ( makes it safe
+            assertEquals("new Foo(\"ab\")", JsMinifier.minify("new Foo(\"a\"+\"b\")"));
+        }
+
+        @Test void unsafeNewWithoutParens() {
+            // new"a"+"b" — new captures "a", + is binary
+            // (new "a") + "b" — not folded because new is in unsafe keyword list
+            assertEquals("new\"a\"+\"b\"", JsMinifier.minify("new \"a\"+\"b\""));
+        }
+
+        // ── Idempotency after fixes ──────────────────────────────────────
+
+        @Test void idempotentDotPropertyAccess() {
+            String once = JsMinifier.minify("\"a\"+\"b\".length");
+            String twice = JsMinifier.minify(once);
+            assertEquals(once, twice);
+        }
+
+        @Test void idempotentUnaryPlus() {
+            String once = JsMinifier.minify("+\"a\"+\"b\"");
+            String twice = JsMinifier.minify(once);
+            assertEquals(once, twice);
+        }
+
+        @Test void idempotentMixedSafe() {
+            String once = JsMinifier.minify("x+\"a\"+\"b\"+\"c\".length");
+            String twice = JsMinifier.minify(once);
+            assertEquals(once, twice);
         }
     }
 

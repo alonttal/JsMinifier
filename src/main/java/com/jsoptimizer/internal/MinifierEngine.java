@@ -83,7 +83,7 @@ public final class MinifierEngine {
                 case REGEX_LITERAL -> processRegex();
             }
         }
-        return shortenArrowBodies(removeRedundantReturn(convertBracketToDot(mergeConsecutiveDeclarations(out.toString()))));
+        return shortenArrowBodies(removeRedundantReturn(convertBracketToDot(foldStringConcatenation(mergeConsecutiveDeclarations(out.toString())))));
     }
 
     // ── CODE state ──────────────────────────────────────────────────────
@@ -933,6 +933,164 @@ public final class MinifierEngine {
         }
 
         return result.toString();
+    }
+
+    // ── Static string concatenation folding (post-pass) ────────────────
+
+    static String foldStringConcatenation(String input) {
+        int len = input.length();
+        if (len == 0) return input;
+
+        StringBuilder result = new StringBuilder(len);
+        int i = 0;
+
+        while (i < len) {
+            char c = input.charAt(i);
+
+            // Skip template literals
+            if (c == '`') {
+                int end = skipTemplateLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Skip regex literals
+            if (c == '/' && i + 1 < len && isRegexStartInPostPass(input, result)) {
+                int end = skipRegexLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Check for string literal that could start a fold chain
+            if (c == '\'' || c == '"') {
+                char quote = c;
+
+                // Safety check: is it safe to fold based on what precedes?
+                if (!isSafeBefore(result)) {
+                    // Unsafe before — emit this string and continue
+                    int end = skipStringLiteral(input, i);
+                    result.append(input, i, end);
+                    i = end;
+                    continue;
+                }
+
+                // Read the first string
+                int firstEnd = skipStringLiteral(input, i);
+                // Raw content is between opening quote and closing quote
+                String firstContent = input.substring(i + 1, firstEnd - 1);
+
+                // Try to greedily extend the fold chain
+                StringBuilder foldedContent = new StringBuilder(firstContent);
+                int chainEnd = firstEnd;
+                int foldCount = 1;
+
+                while (chainEnd < len && input.charAt(chainEnd) == '+') {
+                    int afterPlus = chainEnd + 1;
+                    if (afterPlus >= len) break;
+                    char nextChar = input.charAt(afterPlus);
+                    if (nextChar != quote) break; // not same quote type or not a string
+
+                    // Read candidate string
+                    int candidateEnd = skipStringLiteral(input, afterPlus);
+                    String candidateContent = input.substring(afterPlus + 1, candidateEnd - 1);
+
+                    // Check if char after candidate is an unsafe higher-precedence operator
+                    if (isUnsafeAfter(input, candidateEnd)) {
+                        break; // stop folding, this string is captured by higher-precedence op
+                    }
+
+                    // Safe to fold this candidate
+                    foldedContent.append(candidateContent);
+                    chainEnd = candidateEnd;
+                    foldCount++;
+                }
+
+                if (foldCount >= 2) {
+                    // Emit folded string
+                    result.append(quote);
+                    result.append(foldedContent);
+                    result.append(quote);
+                } else {
+                    // No folding happened, emit original string
+                    result.append(input, i, firstEnd);
+                }
+                i = chainEnd;
+                continue;
+            }
+
+            result.append(c);
+            i++;
+        }
+
+        return result.toString();
+    }
+
+    private static boolean isSafeBefore(StringBuilder result) {
+        if (result.isEmpty()) return true;
+        char last = result.charAt(result.length() - 1);
+
+        // Higher/same-precedence operators that capture the string
+        if (last == '*' || last == '/' || last == '%' || last == '-'
+                || last == '!' || last == '~') {
+            return false;
+        }
+
+        // Disambiguate unary + from binary +
+        // Unary + has higher precedence (16) than additive + (14), so folding
+        // after unary + would change semantics: +"a"+"b" = (+"a")+"b" = "NaNb"
+        // Binary + is safe (same precedence, left-assoc).
+        // + is binary when preceded by an expression-ending token.
+        if (last == '+') {
+            // Skip back past the + and any whitespace (guard spaces)
+            int j = result.length() - 2;
+            while (j >= 0 && result.charAt(j) == ' ') j--;
+            if (j < 0) return false; // + at start = unary
+            char beforePlus = result.charAt(j);
+            // Expression-ending tokens: ), ], identPart, string quotes, template
+            if (beforePlus == ')' || beforePlus == ']' || beforePlus == '"'
+                    || beforePlus == '\'' || beforePlus == '`'
+                    || isIdentPart(beforePlus)) {
+                return true; // binary +, safe
+            }
+            // ++ is postfix increment (expression-ending)
+            if (beforePlus == '+') return true;
+            // Everything else (operators, open parens, comma, etc.) = unary +
+            return false;
+        }
+
+        // Check for unary keyword operators: typeof, void, delete, new
+        if (isIdentPart(last)) {
+            int end = result.length();
+            int start = end - 1;
+            while (start > 0 && isIdentPart(result.charAt(start - 1))) {
+                start--;
+            }
+            String word = result.substring(start, end);
+            return !word.equals("typeof") && !word.equals("void")
+                    && !word.equals("delete") && !word.equals("new");
+        }
+
+        return true;
+    }
+
+    private static boolean isUnsafeAfter(String input, int pos) {
+        if (pos >= input.length()) return false;
+        char c = input.charAt(pos);
+        // Higher-precedence arithmetic operators
+        if (c == '*' || c == '/' || c == '%') return true;
+        // Member access: dot, bracket, call, tagged template
+        if (c == '.' || c == '[' || c == '(' || c == '`') return true;
+        // Optional chaining ?. and ?.[ — but NOT ?? (nullish coalescing)
+        // and NOT ? alone (ternary)
+        if (c == '?' && pos + 1 < input.length()) {
+            char next = input.charAt(pos + 1);
+            if (next == '.' || next == '[') return true; // ?.  ?.[
+            // ?? is nullish coalescing (low precedence) — safe
+            // ? alone is ternary (low precedence) — safe
+        }
+        return false;
     }
 
     // ── Bracket-to-dot property access conversion (post-pass) ────────
