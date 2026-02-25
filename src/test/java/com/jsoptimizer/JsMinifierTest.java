@@ -5920,6 +5920,745 @@ class JsMinifierTest {
         }
     }
 
+    // ── ES6 Object Property Shorthand ──────────────────────────────────
+
+    @Nested
+    class ObjectPropertyShorthand {
+
+        // ── Basic shorthand ──────────────────────────────────────────
+
+        @Test
+        void basicIdentifier() {
+            assertEquals("{x}", JsMinifier.minify("{x:x}"));
+        }
+
+        @Test
+        void longerIdentifier() {
+            assertEquals("{abc}", JsMinifier.minify("{abc:abc}"));
+        }
+
+        @Test
+        void dollarSignIdentifier() {
+            assertEquals("{$x}", JsMinifier.minify("{$x:$x}"));
+        }
+
+        @Test
+        void underscoreIdentifier() {
+            assertEquals("{_x}", JsMinifier.minify("{_x:_x}"));
+        }
+
+        @Test
+        void singleCharIdentifier() {
+            assertEquals("{a}", JsMinifier.minify("{a:a}"));
+        }
+
+        @Test
+        void longIdentifier() {
+            assertEquals("{longVariableName}", JsMinifier.minify("{longVariableName:longVariableName}"));
+        }
+
+        // ── Multiple properties ──────────────────────────────────────
+
+        @Test
+        void twoProperties() {
+            assertEquals("{x,y}", JsMinifier.minify("{x:x,y:y}"));
+        }
+
+        @Test
+        void threeProperties() {
+            assertEquals("{x,y,z}", JsMinifier.minify("{x:x,y:y,z:z}"));
+        }
+
+        @Test
+        void mixedMatchingAndNonMatching() {
+            assertEquals("{x,y:1,z}", JsMinifier.minify("{x:x,y:1,z:z}"));
+        }
+
+        @Test
+        void alternatingMatchAndNonMatch() {
+            assertEquals("{a:1,b,c:2,d}", JsMinifier.minify("{a:1,b:b,c:2,d:d}"));
+        }
+
+        @Test
+        void shorthandAtStartMiddleEnd() {
+            assertEquals("{a,b:1,c,d:2,e}", JsMinifier.minify("{a:a,b:1,c:c,d:2,e:e}"));
+        }
+
+        // ── String key shorthand ────────────────────────────────────
+
+        @Test
+        void doubleQuotedStringKey() {
+            assertEquals("{x}", JsMinifier.minify("{\"x\":x}"));
+        }
+
+        @Test
+        void singleQuotedStringKey() {
+            assertEquals("{x}", JsMinifier.minify("{'x':x}"));
+        }
+
+        @Test
+        void longerDoubleQuotedStringKey() {
+            assertEquals("{abc}", JsMinifier.minify("{\"abc\":abc}"));
+        }
+
+        // ── String key NOT shortened ────────────────────────────────
+
+        @Test
+        void stringKeyWithSpace() {
+            assertEquals("{\"a b\":x}", JsMinifier.minify("{\"a b\":x}"));
+        }
+
+        @Test
+        void stringKeyWithEscape() {
+            assertEquals("{\"a\\n\":x}", JsMinifier.minify("{\"a\\n\":x}"));
+        }
+
+        @Test
+        void stringKeyStartsWithDigit() {
+            assertEquals("{\"123\":x}", JsMinifier.minify("{\"123\":x}"));
+        }
+
+        @Test
+        void emptyStringKey() {
+            assertEquals("{\"\":x}", JsMinifier.minify("{\"\":x}"));
+        }
+
+        @Test
+        void stringKeyDifferentValue() {
+            assertEquals("{\"x\":y}", JsMinifier.minify("{\"x\":y}"));
+        }
+
+        @Test
+        void stringKeyWithHyphen() {
+            assertEquals("{\"my-key\":x}", JsMinifier.minify("{\"my-key\":x}"));
+        }
+
+        // ── NOT shortened (different key/value) ─────────────────────
+
+        @Test
+        void differentKeyValue() {
+            assertEquals("{x:y}", JsMinifier.minify("{x:y}"));
+        }
+
+        @Test
+        void numericValue() {
+            assertEquals("{x:1}", JsMinifier.minify("{x:1}"));
+        }
+
+        @Test
+        void stringValue() {
+            assertEquals("{x:\"a\"}", JsMinifier.minify("{x:\"a\"}"));
+        }
+
+        // ── NOT shortened (complex values) ──────────────────────────
+
+        @Test
+        void propertyAccess() {
+            assertEquals("{x:x.y}", JsMinifier.minify("{x:x.y}"));
+        }
+
+        @Test
+        void functionCall() {
+            assertEquals("{x:x()}", JsMinifier.minify("{x:x()}"));
+        }
+
+        @Test
+        void expression() {
+            assertEquals("{x:x+1}", JsMinifier.minify("{x:x+1}"));
+        }
+
+        @Test
+        void bracketAccess() {
+            assertEquals("{x:x[0]}", JsMinifier.minify("{x:x[0]}"));
+        }
+
+        @Test
+        void unaryOperator() {
+            assertEquals("{x:!x}", JsMinifier.minify("{x:!x}"));
+        }
+
+        @Test
+        void ternaryValue() {
+            assertEquals("{x:x?a:b}", JsMinifier.minify("{x:x?a:b}"));
+        }
+
+        @Test
+        void templateLiteralValue() {
+            assertEquals("{x:`x`}", JsMinifier.minify("{x:`x`}"));
+        }
+
+        @Test
+        void assignmentValue() {
+            assertEquals("{x:x=5}", JsMinifier.minify("{x:x=5}"));
+        }
+
+        @Test
+        void logicalOrValue() {
+            assertEquals("{x:x||y}", JsMinifier.minify("{x:x||y}"));
+        }
+
+        @Test
+        void instanceofValue() {
+            assertEquals("{x:x instanceof Y}", JsMinifier.minify("{x: x instanceof Y}"));
+        }
+
+        // ── NOT shortened (special syntax) ──────────────────────────
+
+        @Test
+        void computedProperty() {
+            assertEquals("{[x]:x}", JsMinifier.minify("{[x]:x}"));
+        }
+
+        @Test
+        void numericKey() {
+            assertEquals("{0:x}", JsMinifier.minify("{0:x}"));
+        }
+
+        @Test
+        void methodSyntax() {
+            assertEquals("{x(){}}", JsMinifier.minify("{x(){}}"));
+        }
+
+        // ── Reserved word safety (MUST NOT shorten) ─────────────────
+        // ES6 shorthand {x} requires x to be a valid IdentifierReference.
+        // Reserved words like null, this, super are NOT IdentifierReference.
+        // Shortening these would produce a syntax error.
+
+        @Test
+        void nullNotShortened() {
+            assertEquals("{null:null}", JsMinifier.minify("{null:null}"));
+        }
+
+        @Test
+        void thisNotShortened() {
+            assertEquals("{this:this}", JsMinifier.minify("{this:this}"));
+        }
+
+        @Test
+        void superNotShortened() {
+            assertEquals("{super:super}", JsMinifier.minify("{super:super}"));
+        }
+
+        @Test
+        void nullNotShortenedInMix() {
+            assertEquals("{x,null:null,y}", JsMinifier.minify("{x:x,null:null,y:y}"));
+        }
+
+        @Test
+        void thisNotShortenedInMix() {
+            assertEquals("{this:this,x}", JsMinifier.minify("{this:this,x:x}"));
+        }
+
+        @Test
+        void stringKeyNullNotShortened() {
+            assertEquals("{\"null\":null}", JsMinifier.minify("{\"null\":null}"));
+        }
+
+        @Test
+        void stringKeyThisNotShortened() {
+            assertEquals("{\"this\":this}", JsMinifier.minify("{\"this\":this}"));
+        }
+
+        @Test
+        void deleteNotShortened() {
+            // delete is a reserved word — even though {delete:delete} is unusual,
+            // we must not produce {delete} which is a syntax error
+            assertEquals("{delete:delete}", JsMinifier.minify("{delete:delete}"));
+        }
+
+        @Test
+        void voidNotShortened() {
+            assertEquals("{void:void 0}", JsMinifier.minify("{void:void 0}"));
+        }
+
+        @Test
+        void inNotShortened() {
+            assertEquals("{in:in}", JsMinifier.minify("{in:in}"));
+        }
+
+        // ── Contextual keywords (SHOULD shorten — valid identifiers) ─
+
+        @Test
+        void getIsShortened() {
+            assertEquals("{get}", JsMinifier.minify("{get:get}"));
+        }
+
+        @Test
+        void setIsShortened() {
+            assertEquals("{set}", JsMinifier.minify("{set:set}"));
+        }
+
+        @Test
+        void asyncIsShortened() {
+            assertEquals("{async}", JsMinifier.minify("{async:async}"));
+        }
+
+        @Test
+        void ofIsShortened() {
+            assertEquals("{of}", JsMinifier.minify("{of:of}"));
+        }
+
+        @Test
+        void fromIsShortened() {
+            assertEquals("{from}", JsMinifier.minify("{from:from}"));
+        }
+
+        @Test
+        void letIsShortened() {
+            // 'let' is not a reserved word in non-strict mode
+            assertEquals("{let}", JsMinifier.minify("{let:let}"));
+        }
+
+        @Test
+        void staticIsShortened() {
+            assertEquals("{static}", JsMinifier.minify("{static:static}"));
+        }
+
+        @Test
+        void yieldIsShortened() {
+            // yield is allowed as IdentifierReference outside generators
+            assertEquals("{yield}", JsMinifier.minify("{yield:yield}"));
+        }
+
+        @Test
+        void awaitIsShortened() {
+            // await is allowed as IdentifierReference outside async
+            assertEquals("{await}", JsMinifier.minify("{await:await}"));
+        }
+
+        // ── Nested objects ──────────────────────────────────────────
+
+        @Test
+        void innerObjectShortened() {
+            assertEquals("{x:{y}}", JsMinifier.minify("{x:{y:y}}"));
+        }
+
+        @Test
+        void outerAndInnerShortened() {
+            assertEquals("{x,y:{z}}", JsMinifier.minify("{x:x,y:{z:z}}"));
+        }
+
+        @Test
+        void deeplyNested() {
+            assertEquals("{a:{b:{c}}}", JsMinifier.minify("{a:{b:{c:c}}}"));
+        }
+
+        @Test
+        void nestedMixedStructures() {
+            assertEquals("{a:{b:c,d}}", JsMinifier.minify("{a:{b:c,d:d}}"));
+        }
+
+        @Test
+        void chainedNested() {
+            assertEquals("{a:{b,c:{d}}}", JsMinifier.minify("{a:{b:b,c:{d:d}}}"));
+        }
+
+        // ── Destructuring ───────────────────────────────────────────
+
+        @Test
+        void variableDestructuring() {
+            assertEquals("const{x}=obj", JsMinifier.minify("const {x:x} = obj"));
+        }
+
+        @Test
+        void paramDestructuring() {
+            assertEquals("function f({x}){}", JsMinifier.minify("function f({x:x}) {}"));
+        }
+
+        @Test
+        void multipleDestructured() {
+            assertEquals("const{x,y}=obj", JsMinifier.minify("const {x:x, y:y} = obj"));
+        }
+
+        @Test
+        void letDestructuring() {
+            assertEquals("let{x,y}=z", JsMinifier.minify("let {x:x, y:y} = z"));
+        }
+
+        @Test
+        void assignmentDestructuring() {
+            assertEquals("({x}=z)", JsMinifier.minify("({x:x} = z)"));
+        }
+
+        @Test
+        void nestedDestructuringArray() {
+            assertEquals("[{x}]=arr", JsMinifier.minify("[{x:x}] = arr"));
+        }
+
+        @Test
+        void destructuringInForOf() {
+            assertEquals("for(let{x}of arr){}", JsMinifier.minify("for (let {x:x} of arr) {}"));
+        }
+
+        // ── Destructuring NOT shortened ─────────────────────────────
+
+        @Test
+        void destructuringWithDefault() {
+            assertEquals("{x:x=5}", JsMinifier.minify("{x:x=5}"));
+        }
+
+        @Test
+        void destructuringRenameWithDefault() {
+            assertEquals("{x:y=5}", JsMinifier.minify("{x:y=5}"));
+        }
+
+        @Test
+        void destructuringDefaultWithCall() {
+            assertEquals("{x:x=f()}", JsMinifier.minify("{x:x=f()}"));
+        }
+
+        // ── Object in expression contexts ───────────────────────────
+
+        @Test
+        void objectInFunctionCall() {
+            assertEquals("f({x})", JsMinifier.minify("f({x:x})"));
+        }
+
+        @Test
+        void objectInFunctionCallMultiple() {
+            assertEquals("f({x,y})", JsMinifier.minify("f({x:x,y:y})"));
+        }
+
+        @Test
+        void objectInArray() {
+            assertEquals("[{x}]", JsMinifier.minify("[{x:x}]"));
+        }
+
+        @Test
+        void multipleObjectsInArray() {
+            assertEquals("[{x},{y}]", JsMinifier.minify("[{x:x},{y:y}]"));
+        }
+
+        @Test
+        void objectInTernaryBothBranches() {
+            assertEquals("a?{x}:{y}", JsMinifier.minify("a ? {x:x} : {y:y}"));
+        }
+
+        @Test
+        void objectAfterReturn() {
+            assertEquals("return{x}", JsMinifier.minify("return {x:x}"));
+        }
+
+        @Test
+        void objectAssignment() {
+            assertEquals("a={x}", JsMinifier.minify("a = {x:x}"));
+        }
+
+        @Test
+        void objectAssignmentMultiple() {
+            assertEquals("a={x,y}", JsMinifier.minify("a = {x:x, y:y}"));
+        }
+
+        @Test
+        void objectInForInit() {
+            assertEquals("for(var j={x};;){}", JsMinifier.minify("for (var j = {x:x};;) {}"));
+        }
+
+        // ── No false matches in non-object contexts ─────────────────
+
+        @Test
+        void commaInFunctionArgsNotMatched() {
+            // comma between args — y is not followed by :
+            assertEquals("f(x,y)", JsMinifier.minify("f(x, y)"));
+        }
+
+        @Test
+        void commaInArrayNotMatched() {
+            assertEquals("[x,y]", JsMinifier.minify("[x, y]"));
+        }
+
+        @Test
+        void ternaryNotFalselyMatched() {
+            // b?c:c — the comma before b triggers, but b is followed by ? not :
+            assertEquals("(a,b?c:c)", JsMinifier.minify("(a, b ? c : c)"));
+        }
+
+        @Test
+        void colonInTernaryNotFalselyMatched() {
+            // after comma, c: looks like property, but c is followed by ternary
+            assertEquals("(a,c?d:d)", JsMinifier.minify("(a, c ? d : d)"));
+        }
+
+        // ── Spread syntax combinations ──────────────────────────────
+
+        @Test
+        void spreadThenProperty() {
+            assertEquals("{...a,x}", JsMinifier.minify("{...a, x:x}"));
+        }
+
+        @Test
+        void propertyThenSpread() {
+            assertEquals("{x,...a}", JsMinifier.minify("{x:x, ...a}"));
+        }
+
+        @Test
+        void spreadBetweenProperties() {
+            assertEquals("{x,...a,y}", JsMinifier.minify("{x:x, ...a, y:y}"));
+        }
+
+        @Test
+        void multipleSpreadAndProperties() {
+            assertEquals("{...a,x,...b,y}", JsMinifier.minify("{...a, x:x, ...b, y:y}"));
+        }
+
+        // ── Getter/setter/async method with shorthand ───────────────
+
+        @Test
+        void getterThenShorthand() {
+            assertEquals("{get x(){return 1},y}", JsMinifier.minify("{get x() { return 1; }, y:y}"));
+        }
+
+        @Test
+        void asyncMethodThenShorthand() {
+            assertEquals("{async f(){},x}", JsMinifier.minify("{async f(){}, x:x}"));
+        }
+
+        // ── String/template/regex values before shorthand ───────────
+
+        @Test
+        void stringValueThenShorthand() {
+            assertEquals("{a:\"s\",x}", JsMinifier.minify("{a:\"s\",x:x}"));
+        }
+
+        @Test
+        void shorthandThenStringValue() {
+            assertEquals("{x,a:\"s\"}", JsMinifier.minify("{x:x,a:\"s\"}"));
+        }
+
+        @Test
+        void stringWithCommaBeforeShorthand() {
+            assertEquals("{a:\"x,y\",b}", JsMinifier.minify("{a:\"x,y\",b:b}"));
+        }
+
+        @Test
+        void stringWithBraceBeforeShorthand() {
+            assertEquals("{a:\"{\",b}", JsMinifier.minify("{a:\"{\",b:b}"));
+        }
+
+        @Test
+        void stringWithCloseBraceBeforeShorthand() {
+            assertEquals("{a:\"}\",b}", JsMinifier.minify("{a:\"}\",b:b}"));
+        }
+
+        @Test
+        void templateLiteralValueThenShorthand() {
+            assertEquals("{a:`x`,b}", JsMinifier.minify("{a:`x`,b:b}"));
+        }
+
+        @Test
+        void regexValueThenShorthand() {
+            assertEquals("{a:/x/,b}", JsMinifier.minify("{a:/x/,b:b}"));
+        }
+
+        // ── Key-value prefix/suffix relationships ───────────────────
+
+        @Test
+        void keyIsPrefixOfValue() {
+            assertEquals("{ab:abc}", JsMinifier.minify("{ab:abc}"));
+        }
+
+        @Test
+        void valueIsPrefixOfKey() {
+            assertEquals("{abc:ab}", JsMinifier.minify("{abc:ab}"));
+        }
+
+        @Test
+        void keyAndValueSamePrefix() {
+            assertEquals("{x:xx}", JsMinifier.minify("{x:xx}"));
+        }
+
+        @Test
+        void keyLongerThanValue() {
+            assertEquals("{xx:x}", JsMinifier.minify("{xx:x}"));
+        }
+
+        // ── Trailing comma ──────────────────────────────────────────
+
+        @Test
+        void trailingCommaPreserved() {
+            assertEquals("{x,}", JsMinifier.minify("{x:x,}"));
+        }
+
+        @Test
+        void trailingCommaWithMultiple() {
+            assertEquals("{x,y,}", JsMinifier.minify("{x:x,y:y,}"));
+        }
+
+        // ── Arrow functions with shorthand ──────────────────────────
+
+        @Test
+        void arrowReturnShorthand() {
+            assertEquals("()=>({x})", JsMinifier.minify("()=>{return {x:x}}"));
+        }
+
+        @Test
+        void arrowReturnMultipleShorthand() {
+            assertEquals("()=>({x,y})", JsMinifier.minify("()=>{return {x:x,y:y}}"));
+        }
+
+        @Test
+        void arrowParamShorthand() {
+            assertEquals("x=>({x})", JsMinifier.minify("x=>{return {x:x}}"));
+        }
+
+        @Test
+        void arrowWithMixedReturn() {
+            assertEquals("()=>({a,b:1})", JsMinifier.minify("()=>{return {a:a,b:1}}"));
+        }
+
+        // ── Interaction with other passes ───────────────────────────
+
+        @Test
+        void bracketToDotStillWorks() {
+            assertEquals("obj.ab", JsMinifier.minify("obj[\"a\"+\"b\"]"));
+        }
+
+        @Test
+        void literalShorteningPlusShorthand() {
+            assertEquals("[!0,{x}]", JsMinifier.minify("[true, {x:x}]"));
+        }
+
+        @Test
+        void declMergePlusShorthand() {
+            assertEquals("var a={x},b={y}", JsMinifier.minify("var a = {x:x}; var b = {y:y}"));
+        }
+
+        @Test
+        void stringConcatThenShorthand() {
+            // String concat fold happens before shorthand pass
+            assertEquals("{x:\"ab\"}", JsMinifier.minify("{x:\"a\"+\"b\"}"));
+        }
+
+        // ── Idempotency ─────────────────────────────────────────────
+
+        @Test
+        void alreadyShortened() {
+            assertEquals("{x}", JsMinifier.minify("{x}"));
+        }
+
+        @Test
+        void doubleMinifyMixed() {
+            String first = JsMinifier.minify("{x:x,y:1}");
+            assertEquals("{x,y:1}", first);
+            assertEquals(first, JsMinifier.minify(first));
+        }
+
+        @Test
+        void doubleMinifyDestructuring() {
+            String first = JsMinifier.minify("const {x:x} = obj");
+            assertEquals("const{x}=obj", first);
+            assertEquals(first, JsMinifier.minify(first));
+        }
+
+        @Test
+        void doubleMinifyNull() {
+            String first = JsMinifier.minify("{null:null}");
+            assertEquals("{null:null}", first);
+            assertEquals(first, JsMinifier.minify(first));
+        }
+
+        @Test
+        void doubleMinifyThis() {
+            String first = JsMinifier.minify("{this:this}");
+            assertEquals("{this:this}", first);
+            assertEquals(first, JsMinifier.minify(first));
+        }
+
+        @Test
+        void doubleMinifyMultipleProperties() {
+            String first = JsMinifier.minify("{a:a,b:b,c:c}");
+            assertEquals("{a,b,c}", first);
+            assertEquals(first, JsMinifier.minify(first));
+        }
+
+        @Test
+        void doubleMinifyNestedObjects() {
+            String first = JsMinifier.minify("{a:{b:b}}");
+            assertEquals("{a:{b}}", first);
+            assertEquals(first, JsMinifier.minify(first));
+        }
+
+        // ── Position edge cases ─────────────────────────────────────
+
+        @Test
+        void objectAtStart() {
+            assertEquals("{x};y", JsMinifier.minify("{x:x};y"));
+        }
+
+        @Test
+        void objectAtEnd() {
+            assertEquals("y;{x}", JsMinifier.minify("y;{x:x}"));
+        }
+
+        @Test
+        void emptyObject() {
+            assertEquals("{}", JsMinifier.minify("{}"));
+        }
+
+        @Test
+        void singleNonMatching() {
+            assertEquals("{x:1}", JsMinifier.minify("{x:1}"));
+        }
+
+        // ── Label safety ────────────────────────────────────────────
+        // {x:x} in statement position is a block with label x: and expression x.
+        // {x} is a block with expression x. Removing the label is safe since
+        // break x cannot appear in the single expression x.
+
+        @Test
+        void labelInBlock() {
+            assertEquals("{x}", JsMinifier.minify("{x:x}"));
+        }
+
+        @Test
+        void labelInBlockAfterLabel() {
+            // outer label:, inner block {x:x} → {x}
+            assertEquals("label:{x}", JsMinifier.minify("label:{x:x}"));
+        }
+
+        // ── __proto__ property ──────────────────────────────────────
+
+        @Test
+        void protoProperty() {
+            assertEquals("{__proto__}", JsMinifier.minify("{__proto__:__proto__}"));
+        }
+
+        // ── Realistic patterns ──────────────────────────────────────
+
+        @Test
+        void returnMultipleProperties() {
+            assertEquals("return{name,value,type}", JsMinifier.minify("return {name:name, value:value, type:type}"));
+        }
+
+        @Test
+        void destructuringFromModule() {
+            assertEquals("const{useState,useEffect}=React", JsMinifier.minify("const {useState:useState, useEffect:useEffect} = React"));
+        }
+
+        @Test
+        void objectWithThisAndRegularProps() {
+            // this must not be shortened, but regular props should be
+            assertEquals("{self:this,x,y}", JsMinifier.minify("{self:this, x:x, y:y}"));
+        }
+
+        @Test
+        void objectWithNullAndRegularProps() {
+            assertEquals("{a:null,x,y}", JsMinifier.minify("{a:null, x:x, y:y}"));
+        }
+
+        @Test
+        void complexRealisticObject() {
+            assertEquals("{name,age:30,email,isActive:!0}",
+                    JsMinifier.minify("{name:name, age:30, email:email, isActive:true}"));
+        }
+
+        @Test
+        void functionReturningObject() {
+            assertEquals("function f(){return{x,y,z}}",
+                    JsMinifier.minify("function f() { return { x:x, y:y, z:z }; }"));
+        }
+    }
+
     // ── Performance ──────────────────────────────────────────────────────
 
     @Nested

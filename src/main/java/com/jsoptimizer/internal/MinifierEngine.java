@@ -26,6 +26,17 @@ public final class MinifierEngine {
             "case", "extends"
     );
 
+    // JS reserved words that cannot be used as shorthand property names.
+    // ES6 shorthand {x} requires x to be a valid IdentifierReference,
+    // which excludes all ReservedWords (except yield/await which are special).
+    private static final Set<String> RESERVED_WORDS = Set.of(
+            "break", "case", "catch", "class", "const", "continue", "debugger",
+            "default", "delete", "do", "else", "enum", "export", "extends",
+            "false", "finally", "for", "function", "if", "import", "in",
+            "instanceof", "new", "null", "return", "super", "switch", "this",
+            "throw", "true", "try", "typeof", "var", "void", "while", "with"
+    );
+
     private static final Set<String> ASI_KEYWORDS = Set.of(
             "return", "throw", "continue", "break", "yield"
     );
@@ -83,7 +94,7 @@ public final class MinifierEngine {
                 case REGEX_LITERAL -> processRegex();
             }
         }
-        return shortenArrowBodies(removeRedundantReturn(convertBracketToDot(foldStringConcatenation(mergeConsecutiveDeclarations(out.toString())))));
+        return shortenArrowBodies(removeRedundantReturn(shortenObjectProperties(convertBracketToDot(foldStringConcatenation(mergeConsecutiveDeclarations(out.toString()))))));
     }
 
     // ── CODE state ──────────────────────────────────────────────────────
@@ -1232,6 +1243,129 @@ public final class MinifierEngine {
             if (!isIdentPart(name.charAt(i))) return false;
         }
         return true;
+    }
+
+    // ── ES6 object property shorthand (post-pass) ─────────────────────
+
+    static String shortenObjectProperties(String input) {
+        int len = input.length();
+        if (len == 0) return input;
+
+        StringBuilder result = new StringBuilder(len);
+        int i = 0;
+
+        while (i < len) {
+            char c = input.charAt(i);
+
+            // Skip string literals
+            if (c == '\'' || c == '"') {
+                int end = skipStringLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Skip template literals
+            if (c == '`') {
+                int end = skipTemplateLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Skip regex literals
+            if (c == '/' && i + 1 < len && isRegexStartInPostPass(input, result)) {
+                int end = skipRegexLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // After { or , look for shorthand candidates
+            if (c == '{' || c == ',') {
+                int j = i + 1;
+
+                // Read the key
+                if (j < len) {
+                    char kc = input.charAt(j);
+
+                    // Case 1: identifier key
+                    if (isIdentStart(kc)) {
+                        int keyStart = j;
+                        int keyEnd = j;
+                        while (keyEnd < len && isIdentPart(input.charAt(keyEnd))) {
+                            keyEnd++;
+                        }
+                        String key = input.substring(keyStart, keyEnd);
+
+                        // Check for ':'
+                        if (keyEnd < len && input.charAt(keyEnd) == ':') {
+                            int valStart = keyEnd + 1;
+                            // Read value identifier
+                            if (valStart < len && isIdentStart(input.charAt(valStart))) {
+                                int valEnd = valStart;
+                                while (valEnd < len && isIdentPart(input.charAt(valEnd))) {
+                                    valEnd++;
+                                }
+                                String value = input.substring(valStart, valEnd);
+
+                                // Check terminator: must be , or }
+                                if (valEnd < len && (input.charAt(valEnd) == ',' || input.charAt(valEnd) == '}')) {
+                                    // Compare key == value, and key must not be a reserved word
+                                    // (ES6 shorthand requires a valid IdentifierReference)
+                                    if (key.equals(value) && !RESERVED_WORDS.contains(key)) {
+                                        // Emit shorthand: delimiter + value only
+                                        result.append(c);
+                                        result.append(value);
+                                        i = valEnd;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Case 2: string key (single or double quoted)
+                    if (kc == '\'' || kc == '"') {
+                        int strEnd = skipStringLiteral(input, j);
+                        String rawContent = input.substring(j + 1, strEnd - 1);
+
+                        // Only if no escape sequences and valid identifier
+                        if (rawContent.indexOf('\\') < 0 && isValidDotProperty(rawContent)) {
+                            // Check for ':'
+                            if (strEnd < len && input.charAt(strEnd) == ':') {
+                                int valStart = strEnd + 1;
+                                // Read value identifier
+                                if (valStart < len && isIdentStart(input.charAt(valStart))) {
+                                    int valEnd = valStart;
+                                    while (valEnd < len && isIdentPart(input.charAt(valEnd))) {
+                                        valEnd++;
+                                    }
+                                    String value = input.substring(valStart, valEnd);
+
+                                    // Check terminator: must be , or }
+                                    if (valEnd < len && (input.charAt(valEnd) == ',' || input.charAt(valEnd) == '}')) {
+                                        // Compare key content == value, and must not be reserved word
+                                        if (rawContent.equals(value) && !RESERVED_WORDS.contains(rawContent)) {
+                                            // Emit shorthand: delimiter + value only
+                                            result.append(c);
+                                            result.append(value);
+                                            i = valEnd;
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            result.append(c);
+            i++;
+        }
+
+        return result.toString();
     }
 
     // ── Remove redundant return at end of function body (post-pass) ────
