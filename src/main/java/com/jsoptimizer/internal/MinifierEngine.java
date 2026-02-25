@@ -94,7 +94,7 @@ public final class MinifierEngine {
                 case REGEX_LITERAL -> processRegex();
             }
         }
-        return shortenArrowBodies(removeRedundantReturn(shortenObjectProperties(convertBracketToDot(foldStringConcatenation(mergeConsecutiveDeclarations(out.toString()))))));
+        return shortenArrowBodies(removeRedundantReturn(shortenObjectProperties(simplifyComputedProperties(convertBracketToDot(foldStringConcatenation(mergeConsecutiveDeclarations(out.toString())))))));
     }
 
     // ── CODE state ──────────────────────────────────────────────────────
@@ -1353,6 +1353,77 @@ public final class MinifierEngine {
                                             i = valEnd;
                                             continue;
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            result.append(c);
+            i++;
+        }
+
+        return result.toString();
+    }
+
+    // ── Computed property key simplification (post-pass) ───────────────
+
+    static String simplifyComputedProperties(String input) {
+        int len = input.length();
+        if (len == 0) return input;
+
+        StringBuilder result = new StringBuilder(len);
+        int i = 0;
+
+        while (i < len) {
+            char c = input.charAt(i);
+
+            // Skip string literals
+            if (c == '\'' || c == '"') {
+                int end = skipStringLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Skip template literals
+            if (c == '`') {
+                int end = skipTemplateLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Skip regex literals
+            if (c == '/' && i + 1 < len && isRegexStartInPostPass(input, result)) {
+                int end = skipRegexLiteral(input, i);
+                result.append(input, i, end);
+                i = end;
+                continue;
+            }
+
+            // Check for computed property: [" or [' after { or ,
+            if (c == '[' && !result.isEmpty()) {
+                char prev = result.charAt(result.length() - 1);
+                if (prev == '{' || prev == ',') {
+                    int afterBracket = i + 1;
+                    if (afterBracket < len) {
+                        char q = input.charAt(afterBracket);
+                        if (q == '\'' || q == '"') {
+                            int strEnd = skipStringLiteral(input, afterBracket);
+                            // Character after closing quote must be ]
+                            if (strEnd < len && input.charAt(strEnd) == ']') {
+                                int afterClose = strEnd + 1;
+                                // Character after ] must be : (property key, not method)
+                                if (afterClose < len && input.charAt(afterClose) == ':') {
+                                    String propName = input.substring(afterBracket + 1, strEnd - 1);
+                                    if (propName.indexOf('\\') < 0
+                                            && isValidDotProperty(propName)) {
+                                        result.append(propName);
+                                        i = strEnd + 1; // skip past ]
+                                        continue;
                                     }
                                 }
                             }

@@ -3592,12 +3592,14 @@ class JsMinifierTest {
         @Test
         void computedPropertyInObject() {
             // { ["key"]: val } — prev char is '{', not expression-ending
-            assertEquals("{[\"key\"]:val}", JsMinifier.minify("{ [\"key\"]: val }"));
+            // Now simplified by simplifyComputedProperties pass
+            assertEquals("{key:val}", JsMinifier.minify("{ [\"key\"]: val }"));
         }
 
         @Test
         void computedPropertyAfterComma() {
-            assertEquals("{a:1,[\"key\"]:2}", JsMinifier.minify("{ a: 1, [\"key\"]: 2 }"));
+            // Now simplified by simplifyComputedProperties pass
+            assertEquals("{a:1,key:2}", JsMinifier.minify("{ a: 1, [\"key\"]: 2 }"));
         }
 
         // ── Escaped strings skipped ──────────────────────────────────────
@@ -6682,6 +6684,561 @@ class JsMinifierTest {
             // Verify it actually minified
             assertTrue(result.length() < input.length());
             assertFalse(result.contains("// comment"));
+        }
+    }
+
+    // ── Computed Property Simplification ────────────────────────────────
+
+    @Nested
+    class ComputedPropertySimplification {
+
+        // ── Basic conversions ──
+
+        @Test
+        void simpleDoubleQuoted() {
+            assertEquals("{foo:1}", JsMinifier.minify("{[\"foo\"]:1}"));
+        }
+
+        @Test
+        void simpleSingleQuoted() {
+            assertEquals("{foo:1}", JsMinifier.minify("{['foo']:1}"));
+        }
+
+        @Test
+        void afterComma() {
+            assertEquals("{a:1,bar:2}", JsMinifier.minify("{a:1,[\"bar\"]:2}"));
+        }
+
+        @Test
+        void multipleComputed() {
+            assertEquals("{x:1,y:2}", JsMinifier.minify("{[\"x\"]:1,[\"y\"]:2}"));
+        }
+
+        @Test
+        void nestedObjects() {
+            assertEquals("{a:{b:1}}", JsMinifier.minify("{[\"a\"]:{[\"b\"]:1}}"));
+        }
+
+        @Test
+        void mixedNormalAndComputed() {
+            assertEquals("{a:1,b:2,c:3}", JsMinifier.minify("{a:1,[\"b\"]:2,c:3}"));
+        }
+
+        // ── Valid identifier keys ──
+
+        @Test
+        void underscorePrefix() {
+            assertEquals("{_priv:1}", JsMinifier.minify("{[\"_priv\"]:1}"));
+        }
+
+        @Test
+        void dollarPrefix() {
+            assertEquals("{$x:1}", JsMinifier.minify("{[\"$x\"]:1}"));
+        }
+
+        @Test
+        void identWithDigits() {
+            assertEquals("{abc123:1}", JsMinifier.minify("{[\"abc123\"]:1}"));
+        }
+
+        @Test
+        void unicodeIdent() {
+            assertEquals("{caf\u00e9:1}", JsMinifier.minify("{[\"caf\u00e9\"]:1}"));
+        }
+
+        // ── Reserved words as keys (valid in ES5+) ──
+
+        @Test
+        void reservedWordClass() {
+            assertEquals("{class:1}", JsMinifier.minify("{[\"class\"]:1}"));
+        }
+
+        @Test
+        void reservedWordReturn() {
+            assertEquals("{return:1}", JsMinifier.minify("{[\"return\"]:1}"));
+        }
+
+        @Test
+        void reservedWordIf() {
+            assertEquals("{if:1}", JsMinifier.minify("{[\"if\"]:1}"));
+        }
+
+        @Test
+        void reservedWordDelete() {
+            assertEquals("{delete:1}", JsMinifier.minify("{[\"delete\"]:1}"));
+        }
+
+        // ── Must NOT convert — invalid identifiers ──
+
+        @Test
+        void hyphenInKey() {
+            assertEquals("{[\"foo-bar\"]:1}", JsMinifier.minify("{[\"foo-bar\"]:1}"));
+        }
+
+        @Test
+        void spaceInKey() {
+            assertEquals("{[\"foo bar\"]:1}", JsMinifier.minify("{[\"foo bar\"]:1}"));
+        }
+
+        @Test
+        void startsWithDigit() {
+            assertEquals("{[\"123\"]:1}", JsMinifier.minify("{[\"123\"]:1}"));
+        }
+
+        @Test
+        void startsWithZero() {
+            assertEquals("{[\"0\"]:1}", JsMinifier.minify("{[\"0\"]:1}"));
+        }
+
+        @Test
+        void emptyString() {
+            assertEquals("{[\"\"]:1}", JsMinifier.minify("{[\"\"]:1}"));
+        }
+
+        @Test
+        void dotInKey() {
+            assertEquals("{[\".\"]:1}", JsMinifier.minify("{[\".\"]:1}"));
+        }
+
+        @Test
+        void hashPrefix() {
+            assertEquals("{[\"#x\"]:1}", JsMinifier.minify("{[\"#x\"]:1}"));
+        }
+
+        // ── Must NOT convert — escape sequences ──
+
+        @Test
+        void escapeNewline() {
+            assertEquals("{[\"a\\nb\"]:1}", JsMinifier.minify("{[\"a\\nb\"]:1}"));
+        }
+
+        @Test
+        void escapeBackslash() {
+            assertEquals("{[\"a\\\\b\"]:1}", JsMinifier.minify("{[\"a\\\\b\"]:1}"));
+        }
+
+        // ── Must NOT convert — not string literal ──
+
+        @Test
+        void variableKey() {
+            assertEquals("{[key]:1}", JsMinifier.minify("{[key]:1}"));
+        }
+
+        @Test
+        void functionCallKey() {
+            assertEquals("{[f()]:1}", JsMinifier.minify("{[f()]:1}"));
+        }
+
+        @Test
+        void numericKey() {
+            assertEquals("{[0]:1}", JsMinifier.minify("{[0]:1}"));
+        }
+
+        // ── Must NOT convert — no colon after ] ──
+
+        @Test
+        void nestedArrays() {
+            assertEquals("[[\"a\"],[\"b\"]]", JsMinifier.minify("[[\"a\"],[\"b\"]]"));
+        }
+
+        @Test
+        void arrayArguments() {
+            assertEquals("f([\"a\"],[\"b\"])", JsMinifier.minify("f([\"a\"],[\"b\"])"));
+        }
+
+        // ── Must NOT convert — method shorthand ──
+
+        @Test
+        void computedMethodName() {
+            assertEquals("{[\"m\"](){}}", JsMinifier.minify("{[\"m\"](){}}"));
+        }
+
+        // ── Destructuring ──
+
+        @Test
+        void destructuringConst() {
+            assertEquals("const{key:alias}=o", JsMinifier.minify("const {[\"key\"]:alias}=o"));
+        }
+
+        @Test
+        void destructuringLet() {
+            assertEquals("let{a:x,b:y}=o", JsMinifier.minify("let {[\"a\"]:x,[\"b\"]:y}=o"));
+        }
+
+        // ── Strings/templates not broken ──
+
+        @Test
+        void insideString() {
+            assertEquals("'{[\"key\"]:val}'", JsMinifier.minify("'{[\"key\"]:val}'"));
+        }
+
+        @Test
+        void insideTemplate() {
+            assertEquals("`{[\"key\"]:val}`", JsMinifier.minify("`{[\"key\"]:val}`"));
+        }
+
+        // ── Interaction with other features ──
+
+        @Test
+        void withDeclarationMerging() {
+            assertEquals("var a={x:1},b={y:2}", JsMinifier.minify("var a={[\"x\"]:1};var b={[\"y\"]:2}"));
+        }
+
+        @Test
+        void withArrowBodyShortening() {
+            assertEquals("()=>({x:1})", JsMinifier.minify("()=>{return {[\"x\"]:1}}"));
+        }
+
+        @Test
+        void bracketToDotStillWorks() {
+            assertEquals("obj.prop", JsMinifier.minify("obj[\"prop\"]"));
+        }
+
+        // ── Idempotency ──
+
+        @Test
+        void alreadySimplified() {
+            assertEquals("{foo:1}", JsMinifier.minify("{foo:1}"));
+        }
+
+        @Test
+        void doubleMinifyStable() {
+            String input = "{[\"x\"]:1,[\"y\"]:2}";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+
+        // ── Additional edge cases ──
+
+        @Test
+        void templateLiteralKeyNotConverted() {
+            assertEquals("{[`tpl`]:1}", JsMinifier.minify("{[`tpl`]:1}"));
+        }
+
+        @Test
+        void singleCharKey() {
+            assertEquals("{x:1}", JsMinifier.minify("{[\"x\"]:1}"));
+        }
+
+        @Test
+        void longKey() {
+            assertEquals("{abcdefghijklmnop:1}", JsMinifier.minify("{[\"abcdefghijklmnop\"]:1}"));
+        }
+
+        @Test
+        void valueIsString() {
+            assertEquals("{foo:\"bar\"}", JsMinifier.minify("{[\"foo\"]:\"bar\"}"));
+        }
+
+        @Test
+        void valueIsArray() {
+            assertEquals("{foo:[1,2]}", JsMinifier.minify("{[\"foo\"]:[1,2]}"));
+        }
+
+        @Test
+        void valueIsObject() {
+            assertEquals("{foo:{a:1}}", JsMinifier.minify("{[\"foo\"]:{a:1}}"));
+        }
+
+        @Test
+        void valueIsFunction() {
+            assertEquals("{foo:function(){}}", JsMinifier.minify("{[\"foo\"]:function(){}}"));
+        }
+
+        @Test
+        void valueIsArrow() {
+            assertEquals("{foo:()=>1}", JsMinifier.minify("{[\"foo\"]:()=>1}"));
+        }
+
+        @Test
+        void tripleNestedObjects() {
+            assertEquals("{a:{b:{c:1}}}", JsMinifier.minify("{[\"a\"]:{[\"b\"]:{[\"c\"]:1}}}"));
+        }
+
+        @Test
+        void manyComputedProperties() {
+            assertEquals("{a:1,b:2,c:3,d:4}", JsMinifier.minify("{[\"a\"]:1,[\"b\"]:2,[\"c\"]:3,[\"d\"]:4}"));
+        }
+
+        @Test
+        void atSignInKey() {
+            // @ is not a valid ident char
+            assertEquals("{[\"@foo\"]:1}", JsMinifier.minify("{[\"@foo\"]:1}"));
+        }
+
+        @Test
+        void exclamationInKey() {
+            assertEquals("{[\"foo!\"]:1}", JsMinifier.minify("{[\"foo!\"]:1}"));
+        }
+
+        @Test
+        void slashInKey() {
+            assertEquals("{[\"/path\"]:1}", JsMinifier.minify("{[\"/path\"]:1}"));
+        }
+
+        @Test
+        void colonInKey() {
+            assertEquals("{[\"a:b\"]:1}", JsMinifier.minify("{[\"a:b\"]:1}"));
+        }
+
+        @Test
+        void bracketInKey() {
+            assertEquals("{[\"a[0]\"]:1}", JsMinifier.minify("{[\"a[0]\"]:1}"));
+        }
+
+        @Test
+        void onlyUnderscore() {
+            assertEquals("{_:1}", JsMinifier.minify("{[\"_\"]:1}"));
+        }
+
+        @Test
+        void onlyDollar() {
+            assertEquals("{$:1}", JsMinifier.minify("{[\"$\"]:1}"));
+        }
+
+        @Test
+        void doubleUnderscorePrefix() {
+            assertEquals("{__proto:1}", JsMinifier.minify("{[\"__proto\"]:1}"));
+        }
+
+        @Test
+        void reservedWordNew() {
+            assertEquals("{new:1}", JsMinifier.minify("{[\"new\"]:1}"));
+        }
+
+        @Test
+        void reservedWordVar() {
+            assertEquals("{var:1}", JsMinifier.minify("{[\"var\"]:1}"));
+        }
+
+        @Test
+        void reservedWordThis() {
+            assertEquals("{this:1}", JsMinifier.minify("{[\"this\"]:1}"));
+        }
+
+        @Test
+        void reservedWordNull() {
+            assertEquals("{null:1}", JsMinifier.minify("{[\"null\"]:1}"));
+        }
+
+        @Test
+        void reservedWordTrue() {
+            assertEquals("{true:1}", JsMinifier.minify("{[\"true\"]:1}"));
+        }
+
+        @Test
+        void reservedWordFalse() {
+            assertEquals("{false:1}", JsMinifier.minify("{[\"false\"]:1}"));
+        }
+
+        // ── More escape sequence variations ──
+
+        @Test
+        void escapeTab() {
+            assertEquals("{[\"a\\tb\"]:1}", JsMinifier.minify("{[\"a\\tb\"]:1}"));
+        }
+
+        @Test
+        void escapeUnicode() {
+            assertEquals("{[\"\\u0041\"]:1}", JsMinifier.minify("{[\"\\u0041\"]:1}"));
+        }
+
+        @Test
+        void escapeQuoteInside() {
+            // "a\"b" gets quote-optimized to 'a"b', which contains non-ident chars so stays
+            assertEquals("{['a\"b']:1}", JsMinifier.minify("{[\"a\\\"b\"]:1}"));
+        }
+
+        // ── Expression keys that must not convert ──
+
+        @Test
+        void concatenationKey() {
+            // foldStringConcatenation folds "a"+"b" into "ab", then computed prop simplifies
+            assertEquals("{ab:1}", JsMinifier.minify("{[\"a\"+\"b\"]:1}"));
+        }
+
+        @Test
+        void ternaryKey() {
+            assertEquals("{[x?\"a\":\"b\"]:1}", JsMinifier.minify("{[x?\"a\":\"b\"]:1}"));
+        }
+
+        @Test
+        void symbolKey() {
+            assertEquals("{[Symbol.iterator]:1}", JsMinifier.minify("{[Symbol.iterator]:1}"));
+        }
+
+        // ── Getter/setter with computed names ──
+
+        @Test
+        void computedGetter() {
+            // get ["x"]() {} — bracket-to-dot converts get["x"] to get.x
+            // (get is not in NON_VALUE_KEYWORDS), ] followed by ( not :
+            assertEquals("{get.x(){}}", JsMinifier.minify("{get [\"x\"](){}}"));
+        }
+
+        @Test
+        void computedSetter() {
+            assertEquals("{set.x(v){}}", JsMinifier.minify("{set [\"x\"](v){}}"));
+        }
+
+        // ── Whitespace handling (pre-minified) ──
+
+        @Test
+        void spacesAroundKey() {
+            assertEquals("{foo:1}", JsMinifier.minify("{ [ \"foo\" ] : 1 }"));
+        }
+
+        @Test
+        void newlinesAroundKey() {
+            assertEquals("{foo:1}", JsMinifier.minify("{\n[\"foo\"]\n:\n1\n}"));
+        }
+
+        // ── Inside various contexts ──
+
+        @Test
+        void insideIfCondition() {
+            // )["b"] is converted to .b by bracket-to-dot (prev is ')')
+            assertEquals("if([\"a\"]).b", JsMinifier.minify("if ([\"a\"]) [\"b\"]"));
+        }
+
+        @Test
+        void objectInAssignment() {
+            assertEquals("x={foo:1}", JsMinifier.minify("x={[\"foo\"]:1}"));
+        }
+
+        @Test
+        void objectInReturnStatement() {
+            assertEquals("return{foo:1}", JsMinifier.minify("return {[\"foo\"]:1}"));
+        }
+
+        @Test
+        void objectAsArgument() {
+            assertEquals("f({foo:1})", JsMinifier.minify("f({[\"foo\"]:1})"));
+        }
+
+        @Test
+        void objectInArray() {
+            assertEquals("[{foo:1}]", JsMinifier.minify("[{[\"foo\"]:1}]"));
+        }
+
+        @Test
+        void objectSpread() {
+            assertEquals("{...a,foo:1}", JsMinifier.minify("{...a,[\"foo\"]:1}"));
+        }
+
+        // ── Destructuring advanced ──
+
+        @Test
+        void destructuringVar() {
+            assertEquals("var{key:alias}=o", JsMinifier.minify("var {[\"key\"]:alias}=o"));
+        }
+
+        @Test
+        void destructuringInFunction() {
+            assertEquals("function f({key:alias}){}", JsMinifier.minify("function f({[\"key\"]:alias}){}"));
+        }
+
+        @Test
+        void destructuringInArrow() {
+            assertEquals("({key:alias})=>alias", JsMinifier.minify("({[\"key\"]:alias})=>alias"));
+        }
+
+        @Test
+        void nestedDestructuring() {
+            assertEquals("const{a:{b:c}}=o", JsMinifier.minify("const {[\"a\"]:{[\"b\"]:c}}=o"));
+        }
+
+        // ── Mixed computed and dot access ──
+
+        @Test
+        void computedPropertyAndDotAccess() {
+            assertEquals("var o={foo:obj.bar}", JsMinifier.minify("var o={[\"foo\"]:obj[\"bar\"]}"));
+        }
+
+        // ── Class bodies ──
+
+        @Test
+        void classComputedProperty() {
+            // Class fields: {["x"]:... doesn't apply because class body uses = not :
+            // But class methods use (
+            assertEquals("class C{[\"m\"](){}}", JsMinifier.minify("class C{[\"m\"](){}}"));
+        }
+
+        // ── Idempotency for all edge cases ──
+
+        @Test
+        void doubleMinifyInvalidKeys() {
+            String input = "{[\"foo-bar\"]:1,[\"123\"]:2}";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+        }
+
+        @Test
+        void doubleMinifyMixed() {
+            String input = "{[\"valid\"]:1,[\"in-valid\"]:2,[\"ok\"]:3}";
+            String first = JsMinifier.minify(input);
+            String second = JsMinifier.minify(first);
+            assertEquals(first, second);
+            assertEquals("{valid:1,[\"in-valid\"]:2,ok:3}", first);
+        }
+
+        // ── Interaction with redundant return removal ──
+
+        @Test
+        void withRedundantReturn() {
+            assertEquals("function f(){return{foo:1}}", JsMinifier.minify("function f(){return {[\"foo\"]:1}}"));
+        }
+
+        // ── Bracket access after computed prop object ──
+
+        @Test
+        void bracketAccessOnObjectWithComputedProp() {
+            // }["bar"] — prev is '}', which is not in canConvert for bracket-to-dot
+            assertEquals("{foo:1}[\"bar\"]", JsMinifier.minify("{[\"foo\"]:1}[\"bar\"]"));
+        }
+
+        // ── Only [ at start of input ──
+
+        @Test
+        void bracketAtStartIsArray() {
+            assertEquals("[\"a\",\"b\"]", JsMinifier.minify("[\"a\",\"b\"]"));
+        }
+
+        // ── Empty object not affected ──
+
+        @Test
+        void emptyObject() {
+            assertEquals("{}", JsMinifier.minify("{}"));
+        }
+
+        // ── Regex inside object value not broken ──
+
+        @Test
+        void regexInValue() {
+            assertEquals("{foo:/bar/}", JsMinifier.minify("{[\"foo\"]:/bar/}"));
+        }
+
+        // ── Comment between computed property tokens (gets stripped) ──
+
+        @Test
+        void commentInsideComputedProperty() {
+            assertEquals("{foo:1}", JsMinifier.minify("{[/*c*/\"foo\"]:1}"));
+        }
+
+        // ── Numeric string keys ──
+
+        @Test
+        void numericStringWithLetterPrefix() {
+            // "a1" is a valid identifier
+            assertEquals("{a1:1}", JsMinifier.minify("{[\"a1\"]:1}"));
+        }
+
+        @Test
+        void singleDigitString() {
+            // "5" starts with digit — stays
+            assertEquals("{[\"5\"]:1}", JsMinifier.minify("{[\"5\"]:1}"));
         }
     }
 }
